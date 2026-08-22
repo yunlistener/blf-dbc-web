@@ -179,29 +179,8 @@ function draw() {
   const data = [x];
   for (let i = 1; i <= MAX_SERIES; i++) data.push(per[i] || []);
   state.uplot.setData(data);
-  // 直接设置 x/y 范围(直接赋值 min/max/_min/_max,uPlot 坐标换算用 _min/_max)
-  const xs = state.uplot.scales.x;
-  if (x.length > 1) {
-    xs.min = x[0];
-    xs.max = x[x.length - 1];
-    xs._min = x[0];
-    xs._max = x[x.length - 1];
-  }
-  let lo = Infinity, hi = -Infinity;
-  for (const s of state.signals) {
-    lo = Math.min(lo, ...s.data.values);
-    hi = Math.max(hi, ...s.data.values);
-  }
-  if (isFinite(lo)) {
-    const ys = state.uplot.scales.y;
-    ys.min = lo;
-    ys.max = hi;
-    ys._min = lo;   // distr=0(线性)时 _min/_max 直接等于 min/max
-    ys._max = hi;
-    // 失效所有系列路径缓存(否则旧路径坐标仍为 NaN,不会重新生成)
-    state.uplot.series.forEach((s, i) => { if (i > 0) s._paths = null; });
-    state.uplot.redraw();
-  }
+  // 注:不再手动赋值 scale 范围(uPlot 全自动:setData 后 x/y auto 计算;
+  // 缩放走 setScale,手动赋值会绕过其状态管理导致滚轮/框选失效)
   // 手动刷新读数面板(注意:bbox 是物理像素,须除以 pxRatio 转 CSS 像素)
   const b = state.uplot.bbox;
   const pxr = uPlot.pxRatio || 1;
