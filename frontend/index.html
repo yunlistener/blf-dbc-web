@@ -16,6 +16,7 @@
       <span id="file-dbc" class="file-chip">DBC: —</span>
     </div>
     <div class="spacer"></div>
+    <button id="btn-upload" class="btn" onclick="openUpload()" title="上传 BLF / DBC 文件">上传文件</button>
     <button id="btn-export" class="btn" title="导出当前报文全部信号为 CSV">导出 CSV</button>
     <button id="btn-reset" class="btn" title="重置时间轴">重置缩放</button>
   </div>
@@ -75,6 +76,22 @@
     <span id="st-ids">报文数 —</span>
     <span class="spacer"></span>
     <span id="st-tip">点击左侧信号查看曲线(可多选叠加)· 拖拽框选缩放 · 滚轮缩放</span>
+  </div>
+
+  <!-- 上传模态 -->
+  <div id="upload-modal" class="modal" style="display:none">
+    <div class="modal-box">
+      <div class="modal-title">上传文件<span class="modal-close" onclick="closeUpload()">×</span></div>
+      <div id="drop-zone" class="drop-zone" onclick="document.getElementById('file-input').click()">
+        拖拽 .blf / .dbc 文件到此处<br><small>或点击选择文件(可多选)</small>
+      </div>
+      <input type="file" id="file-input" multiple accept=".blf,.dbc" style="display:none">
+      <div id="upload-list" class="upload-list"></div>
+      <div class="modal-actions">
+        <button class="btn" onclick="closeUpload()">取消</button>
+        <button class="btn primary" id="btn-upload-go" onclick="startUpload()" disabled>上传</button>
+      </div>
+    </div>
   </div>
 
 <script src="vendor/uPlot.min.js"></script>

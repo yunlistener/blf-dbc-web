@@ -223,6 +223,48 @@ td.t-decoded .dv { margin-right: 12px; }
 /* uPlot 深色适配 */
 .uplot .u-title { color: #c9ced6; }
 
+/* 上传模态 */
+.modal {
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(0,0,0,.55);
+  display: flex; align-items: center; justify-content: center;
+}
+.modal-box {
+  width: 480px; max-width: 92vw;
+  background: #1d2129; border: 1px solid #2c323d; border-radius: 8px;
+  padding: 16px; color: #c9ced6;
+}
+.modal-title {
+  font-size: 14px; font-weight: 600; color: #e8ecf2;
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 12px;
+}
+.modal-close { cursor: pointer; color: #8a93a3; font-size: 18px; padding: 0 4px; }
+.modal-close:hover { color: #fff; }
+.drop-zone {
+  border: 1.5px dashed #3a4150; border-radius: 6px;
+  padding: 28px 12px; text-align: center; color: #8a93a3;
+  cursor: pointer; font-size: 13px; line-height: 1.8;
+  transition: border-color .15s, background .15s;
+}
+.drop-zone:hover, .drop-zone.drag-over { border-color: #4da3ff; background: rgba(77,163,255,.06); color: #c9ced6; }
+.drop-zone small { color: #5b6472; }
+.upload-list { margin-top: 12px; max-height: 180px; overflow-y: auto; }
+.upload-row {
+  display: flex; gap: 8px; align-items: center;
+  font-size: 12px; padding: 5px 6px; border-radius: 4px;
+}
+.upload-row:nth-child(odd) { background: #191d24; }
+.upload-row span:first-child { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.up-size { color: #5b6472; }
+.up-status { color: #8a93a3; min-width: 64px; text-align: right; }
+.up-status.ok { color: #5ad47a; }
+.up-status.err { color: #ff6b6b; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.btn.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
+.btn.primary:hover { background: #1d4ed8; }
+.btn.primary:disabled { opacity: .5; cursor: not-allowed; }
+
 /* 窄屏适配:隐藏侧边栏,让图表占满 */
 @media (max-width: 900px) {
   #sidebar { display: none; }

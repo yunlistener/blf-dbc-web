@@ -20,10 +20,86 @@ window.addEventListener("error", (e) => {
 });
 window.addEventListener("unhandledrejection", (e) => showTip("异常: " + e.reason));
 
-async function api(path) {
-  const r = await fetch(path);
+async function api(path, opts) {
+  const r = await fetch(path, opts);
   if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
   return r.json();
+}
+
+/* ---------- 文件上传 ---------- */
+let pendingFiles = [];
+
+function openUpload() {
+  pendingFiles = [];
+  document.getElementById("file-input").value = "";
+  renderUploadList();
+  document.getElementById("upload-modal").style.display = "flex";
+}
+
+function closeUpload() {
+  document.getElementById("upload-modal").style.display = "none";
+}
+
+document.getElementById("file-input").addEventListener("change", (e) => {
+  pendingFiles = Array.from(e.target.files || []);
+  renderUploadList();
+});
+
+const dropZone = document.getElementById("drop-zone");
+dropZone.addEventListener("dragover", (e) => {
+  e.preventDefault();
+  dropZone.classList.add("drag-over");
+});
+dropZone.addEventListener("dragleave", () => dropZone.classList.remove("drag-over"));
+dropZone.addEventListener("drop", (e) => {
+  e.preventDefault();
+  dropZone.classList.remove("drag-over");
+  pendingFiles = Array.from(e.dataTransfer.files || []).filter(f => /\.(blf|dbc)$/i.test(f.name));
+  renderUploadList();
+});
+
+function renderUploadList() {
+  const list = document.getElementById("upload-list");
+  const btn = document.getElementById("btn-upload-go");
+  list.innerHTML = pendingFiles.length
+    ? pendingFiles.map((f, i) =>
+        `<div class="upload-row" id="up-row-${i}"><span>${f.name}</span><span class="up-size">${(f.size / 1024).toFixed(1)} KB</span><span class="up-status">待上传</span></div>`).join("")
+    : `<div class="hint">尚未选择文件</div>`;
+  btn.disabled = pendingFiles.length === 0;
+}
+
+async function startUpload() {
+  const btn = document.getElementById("btn-upload-go");
+  btn.disabled = true;
+  btn.textContent = "上传中…";
+  let ok = 0, fail = 0;
+  for (let i = 0; i < pendingFiles.length; i++) {
+    const f = pendingFiles[i];
+    const row = document.getElementById(`up-row-${i}`);
+    const status = row.querySelector(".up-status");
+    status.textContent = "上传中…";
+    const fd = new FormData();
+    fd.append("file", f);
+    try {
+      const r = await api("/api/files/upload", { method: "POST", body: fd });
+      status.textContent = "✓ 完成";
+      status.className = "up-status ok";
+      ok++;
+    } catch (err) {
+      status.textContent = "✗ " + (err.message || "失败");
+      status.className = "up-status err";
+      fail++;
+    }
+  }
+  btn.textContent = "上传";
+  if (ok > 0) {
+    showTip(`上传完成:成功 ${ok} 个${fail ? `,失败 ${fail} 个` : ""}`);
+    await loadFiles();   // 重新加载文件列表和报文树
+    closeUpload();
+  } else {
+    showTip("上传失败,请检查文件格式(.blf / .dbc)");
+    btn.disabled = false;
+  }
 }
 
 /* ---------- uPlot ---------- */
