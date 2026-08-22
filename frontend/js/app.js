@@ -90,13 +90,29 @@ function draw() {
   const data = [x];
   for (let i = 1; i <= MAX_SERIES; i++) data.push(per[i] || []);
   state.uplot.setData(data);
-  if (x.length > 1) state.uplot.setScale("x", { min: x[0], max: x[x.length - 1] });
+  // 直接设置 x/y 范围(直接赋值 min/max/_min/_max,uPlot 坐标换算用 _min/_max)
+  const xs = state.uplot.scales.x;
+  if (x.length > 1) {
+    xs.min = x[0];
+    xs.max = x[x.length - 1];
+    xs._min = x[0];
+    xs._max = x[x.length - 1];
+  }
   let lo = Infinity, hi = -Infinity;
   for (const s of state.signals) {
     lo = Math.min(lo, ...s.data.values);
     hi = Math.max(hi, ...s.data.values);
   }
-  if (isFinite(lo)) state.uplot.setScale("y", lo === hi ? { min: lo - 1, max: hi + 1 } : { min: lo, max: hi });
+  if (isFinite(lo)) {
+    const ys = state.uplot.scales.y;
+    ys.min = lo;
+    ys.max = hi;
+    ys._min = lo;   // distr=0(线性)时 _min/_max 直接等于 min/max
+    ys._max = hi;
+    // 失效所有系列路径缓存(否则旧路径坐标仍为 NaN,不会重新生成)
+    state.uplot.series.forEach((s, i) => { if (i > 0) s._paths = null; });
+    state.uplot.redraw();
+  }
   // 手动刷新读数面板(注意:bbox 是物理像素,须除以 pxRatio 转 CSS 像素)
   const b = state.uplot.bbox;
   const pxr = uPlot.pxRatio || 1;
@@ -107,7 +123,17 @@ function draw() {
 function applySeries(s) {
   const u = state.uplot;
   if (!u) return;
-  u.setSeries(s.slot, { show: true, label: s.signal, stroke: s.color, width: 1.5, points: { show: false } });
+  const sl = u.series[s.slot];
+  if (!sl) return;
+  // 注意:uPlot 的 setSeries() 只处理 show/focus,其他字段必须直接操作 series 对象;
+  // stroke/points.show 等绘制时被当作函数调用,必须用函数形式
+  sl.show = true;
+  sl.label = s.signal;
+  sl.stroke = () => s.color;
+  sl.scale = "y";
+  sl.auto = true;
+  sl.width = 1.5;
+  if (sl.points) sl.points.show = () => false;
 }
 
 function makeUplotOpts() {
@@ -116,9 +142,11 @@ function makeUplotOpts() {
     width: Math.max(200, el.clientWidth - 16),   // 防止窄窗口下宽度为负
     height: Math.max(200, el.clientHeight - 16),
     legend: { show: false },
+    // 槽位 series 显式挂到 y scale 并参与 auto 计算(否则只算第一个信号,其它曲线消失)
+    series: [{}, ...Array.from({ length: MAX_SERIES }, () => ({ show: false, scale: "y", auto: true }))],
     scales: {
       x: { time: false },   // auto 保持默认,由数据自动确定范围
-      y: { auto: false },
+      y: {},                // y 全自动:自动聚合所有 series 数据确定范围
     },
     axes: [
       { stroke: "#8a93a3", grid: { stroke: "#242830", width: 1 },
