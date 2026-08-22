@@ -16,6 +16,7 @@
       <span id="file-dbc" class="file-chip">DBC: —</span>
     </div>
     <div class="spacer"></div>
+    <button id="btn-config" class="btn" onclick="openConfig()" title="总线/波特率/文件配置">⚙ 配置</button>
     <button id="btn-upload" class="btn" onclick="openUpload()" title="上传 BLF / DBC 文件">上传文件</button>
     <button id="btn-export" class="btn" title="导出当前报文全部信号为 CSV">导出 CSV</button>
     <button id="btn-reset" class="btn" title="重置时间轴">重置缩放</button>
@@ -90,6 +91,50 @@
       <div class="modal-actions">
         <button class="btn" onclick="closeUpload()">取消</button>
         <button class="btn primary" id="btn-upload-go" onclick="startUpload()" disabled>上传</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 配置模态 -->
+  <div id="config-modal" class="modal" style="display:none">
+    <div class="modal-box config-box">
+      <div class="modal-title">工程配置<span class="modal-close" onclick="closeConfig()">×</span></div>
+      <div class="config-row">
+        <label>总线类型</label>
+        <select id="cfg-bus-type">
+          <option value="canfd">CAN FD</option>
+          <option value="can">CAN 经典</option>
+        </select>
+      </div>
+      <div class="config-row" id="row-baud-arb">
+        <label>仲裁段波特率</label>
+        <select id="cfg-baud-arb">
+          <option value="125000">125 kbit/s</option>
+          <option value="250000">250 kbit/s</option>
+          <option value="500000" selected>500 kbit/s</option>
+          <option value="1000000">1 Mbit/s</option>
+        </select>
+      </div>
+      <div class="config-row" id="row-baud-data">
+        <label>数据段波特率</label>
+        <select id="cfg-baud-data">
+          <option value="1000000">1 Mbit/s</option>
+          <option value="2000000" selected>2 Mbit/s</option>
+          <option value="5000000">5 Mbit/s</option>
+        </select>
+      </div>
+      <div class="config-row">
+        <label>BLF 日志</label>
+        <select id="cfg-blf"><option value="">— 请选择 —</option></select>
+      </div>
+      <div class="config-row">
+        <label>DBC 数据库</label>
+        <select id="cfg-dbc"><option value="">— 请选择 —</option></select>
+      </div>
+      <div class="config-hint" id="config-tip"></div>
+      <div class="modal-actions">
+        <button class="btn" onclick="closeConfig()">取消</button>
+        <button class="btn primary" onclick="saveConfig()">保存并应用</button>
       </div>
     </div>
   </div>

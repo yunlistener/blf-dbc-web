@@ -11,9 +11,22 @@ const state = {
   signals: [],       // 已选信号 [{frame_id, signal, unit, color, slot, data}]
   uplot: null,
   trace: { frameId: null, offset: 0, limit: 200 },
+  config: {},        // 工程配置(总线/波特率/文件)
 };
 
 function showTip(msg) { document.getElementById("st-tip").textContent = msg; }
+
+/* 信号值格式化:数值保留 6 位有效数字;值表(choices)显示名称(值);dict/数组转 JSON;null 显示 — */
+function fmtVal(v) {
+  if (v == null) return "—";
+  if (typeof v === "number") return String(Number(v.toPrecision(6)));
+  if (typeof v === "object") {
+    // cantools 值表信号: {name: 'Valid', value: 0, _comments: {}}
+    if ("name" in v) return v.value != null ? `${v.name}(${v.value})` : String(v.name);
+    try { return JSON.stringify(v); } catch (e) { return String(v); }
+  }
+  return String(v);
+}
 window.addEventListener("error", (e) => {
   const stack = (e.error && e.error.stack || "").split("\n")[1] || "";
   showTip("JS错误: " + e.message + " " + stack.trim());
@@ -114,7 +127,7 @@ function onCursorMove(u, x, y) {
     const div = document.createElement("span");
     div.className = "ro-sig-val";
     div.innerHTML = `<span class="dot" style="background:${s.color}"></span>
-      ${s.signal}: <b>${v == null ? "—" : Number(v.toPrecision(6))}</b>
+      ${s.signal}: <b>${fmtVal(v)}</b>
       <span class="u">${s.unit || ""}</span>`;
     box.appendChild(div);
   });
@@ -264,19 +277,95 @@ function makeUplotOpts() {
   };
 }
 
+/* ---------- 配置 ---------- */
+async function openConfig() {
+  const cfg = state.config || {};
+  document.getElementById("cfg-bus-type").value = cfg.bus_type || "canfd";
+  const arb = document.getElementById("cfg-baud-arb");
+  const data = document.getElementById("cfg-baud-data");
+  arb.value = String(cfg.baudrate_arb || 500000);
+  if (![...arb.options].some(o => o.value === arb.value)) arb.value = "500000";
+  data.value = String(cfg.baudrate_data || 2000000);
+  if (![...data.options].some(o => o.value === data.value)) data.value = "2000000";
+  syncBusTypeUI();
+  // 文件下拉
+  const { files } = await api("/api/files");
+  const blfSel = document.getElementById("cfg-blf");
+  const dbcSel = document.getElementById("cfg-dbc");
+  blfSel.innerHTML = '<option value="">— 请选择 —</option>' + files
+    .filter(f => f.kind === ".blf")
+    .map(f => `<option value="${f.name}">${f.name}</option>`).join("");
+  dbcSel.innerHTML = '<option value="">— 请选择 —</option>' + files
+    .filter(f => f.kind === ".dbc")
+    .map(f => `<option value="${f.name}">${f.name}</option>`).join("");
+  blfSel.value = cfg.blf || state.blf || "";
+  dbcSel.value = cfg.dbc || state.dbc || "";
+  document.getElementById("config-tip").textContent = "";
+  document.getElementById("config-modal").style.display = "flex";
+}
+
+function closeConfig() {
+  document.getElementById("config-modal").style.display = "none";
+}
+
+function syncBusTypeUI() {
+  const isFd = document.getElementById("cfg-bus-type").value === "canfd";
+  document.getElementById("row-baud-data").style.display = isFd ? "" : "none";
+}
+
+async function saveConfig() {
+  const tip = document.getElementById("config-tip");
+  const payload = {
+    bus_type: document.getElementById("cfg-bus-type").value,
+    baudrate_arb: parseInt(document.getElementById("cfg-baud-arb").value, 10),
+    baudrate_data: parseInt(document.getElementById("cfg-baud-data").value, 10),
+    blf: document.getElementById("cfg-blf").value || null,
+    dbc: document.getElementById("cfg-dbc").value || null,
+  };
+  if (!payload.blf || !payload.dbc) {
+    tip.textContent = "请选择 BLF 和 DBC 文件";
+    return;
+  }
+  try {
+    state.config = await api("/api/config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    tip.textContent = "已保存,正在应用…";
+    closeConfig();
+    await loadFiles();   // loadFiles 会用 state.config 重新加载
+  } catch (e) {
+    tip.textContent = "保存失败: " + e.message;
+  }
+}
+
 /* ---------- 数据加载 ---------- */
 async function loadFiles() {
   const { files } = await api("/api/files");
-  state.blf = files.find(f => f.kind === ".blf")?.name;
-  state.dbc = files.find(f => f.kind === ".dbc")?.name;
+  const blfs = files.filter(f => f.kind === ".blf");
+  const dbcs = files.filter(f => f.kind === ".dbc");
+  // 优先用配置指定的文件,否则取第一个
+  const cfg = state.config || {};
+  state.blf = (cfg.blf && blfs.find(f => f.name === cfg.blf)) ? cfg.blf : (blfs[0]?.name || null);
+  state.dbc = (cfg.dbc && dbcs.find(f => f.name === cfg.dbc)) ? cfg.dbc : (dbcs[0]?.name || null);
   if (!state.blf || !state.dbc) throw new Error("缺少 BLF 或 DBC 文件,请先上传");
   document.getElementById("file-blf").textContent = "BLF: " + state.blf;
   document.getElementById("file-dbc").textContent = "DBC: " + state.dbc;
 
+  // 重置分析状态(文件可能已切换)
+  state.signals = [];
+  if (state.uplot) { state.uplot.destroy(); state.uplot = null; }
+  document.getElementById("chart").innerHTML = "";
+  document.getElementById("ro-signals").innerHTML = "";
+  state.trace = { frameId: null, offset: 0, limit: 200 };
+
   state.stats = await api(`/api/blf/${state.blf}/stats`);
+  state.t0 = state.stats.first_timestamp || 0;   // 绝对时间基准:曲线/读数/表格显示相对时间
   document.getElementById("st-frames").textContent = `帧数 ${state.stats.total_frames}`;
   document.getElementById("st-duration").textContent = `时长 ${state.stats.duration_s.toFixed(1)} s`;
   document.getElementById("st-ids").textContent = `报文数 ${state.stats.unique_ids}`;
+  showTip(`日志开始: ${state.t0 ? new Date(state.t0 * 1000).toLocaleString() : "—"}(时间显示为相对秒)`);
   await loadDbcTree();
   renderStats();
 }
@@ -361,6 +450,8 @@ async function toggleSignal(msg, signal, item) {
 
   const data = await api(`/api/blf/${state.blf}/decode?dbc=${state.dbc}` +
     `&frame_id=${msg.frame_id_hex}&signal=${encodeURIComponent(signal)}&max_points=200000`);
+  // 绝对时间戳 → 相对时间(以日志起始为 0)
+  data.times = data.times.map(t => t - state.t0);
   // 槽位分配须与 push 同步完成(避免并发请求拿到相同槽位)
   const usedSlots = new Set(state.signals.map(s => s.slot));
   const slot = [1, 2, 3, 4, 5, 6].find(i => !usedSlots.has(i));
@@ -424,10 +515,10 @@ async function loadTrace() {
     let dec = "";
     if (f.decoded) {
       dec = Object.entries(f.decoded)
-        .map(([k, v]) => `<span class="dv">${k}=${Number(v.toPrecision(6))}</span>`)
+        .map(([k, v]) => `<span class="dv">${k}=${fmtVal(v)}</span>`)
         .join("");
     }
-    tr.innerHTML = `<td class="t-time">${f.timestamp.toFixed(3)}</td>
+    tr.innerHTML = `<td class="t-time">${(f.timestamp - state.t0).toFixed(3)}</td>
       <td class="t-id">${f.id_hex}</td><td>${f.name}</td><td>${f.dlc}</td>
       <td class="t-data">${f.data}</td><td class="t-decoded">${dec}</td>`;
     body.appendChild(tr);
@@ -468,6 +559,13 @@ function switchTab(name) {
   if (name === "stats") renderStats();
 }
 
-loadFiles().catch(e => {
+document.getElementById("cfg-bus-type").addEventListener("change", syncBusTypeUI);
+
+async function init() {
+  try { state.config = await api("/api/config"); } catch (e) { state.config = {}; }
+  await loadFiles();
+}
+
+init().catch(e => {
   document.getElementById("tree-hint").textContent = "加载失败: " + e.message;
 });

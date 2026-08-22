@@ -265,6 +265,21 @@ td.t-decoded .dv { margin-right: 12px; }
 .btn.primary:hover { background: #1d4ed8; }
 .btn.primary:disabled { opacity: .5; cursor: not-allowed; }
 
+/* 配置模态 */
+.config-box { width: 460px; }
+.config-row {
+  display: flex; align-items: center; gap: 12px;
+  margin-bottom: 10px; font-size: 13px;
+}
+.config-row label { width: 110px; flex: none; color: #8a93a3; }
+.config-row select {
+  flex: 1; background: #14171d; color: #e8ecf2;
+  border: 1px solid #2c323d; border-radius: 5px;
+  padding: 6px 8px; font-size: 13px;
+}
+.config-row select:focus { outline: none; border-color: #4da3ff; }
+.config-hint { font-size: 12px; color: #5ad47a; min-height: 16px; margin-top: 2px; }
+
 /* 窄屏适配:隐藏侧边栏,让图表占满 */
 @media (max-width: 900px) {
   #sidebar { display: none; }

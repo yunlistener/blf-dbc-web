@@ -4,11 +4,12 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from app.api import blf, dbc, files
+from app.api import blf, config_api, dbc, files
 
 app = FastAPI(title="BLF/DBC 网页解析平台", version="0.1.0")
 
 app.include_router(files.router, prefix="/api/files", tags=["files"])
+app.include_router(config_api.router, prefix="/api/config", tags=["config"])
 app.include_router(dbc.router, prefix="/api/dbc", tags=["dbc"])
 app.include_router(blf.router, prefix="/api/blf", tags=["blf"])
 
