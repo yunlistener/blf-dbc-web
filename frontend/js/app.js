@@ -8,10 +8,11 @@ const state = {
   blf: null,
   dbc: null,
   stats: null,
-  signals: [],       // 已选信号 [{frame_id, signal, unit, color, slot, data}]
+  signals: [],       // 已选信号 [{frame_id, signal, unit, color, slot, data, channel, dbc}]
   uplot: null,
-  trace: { frameId: null, offset: 0, limit: 200 },
-  config: {},        // 工程配置(总线/波特率/文件)
+  trace: { frameId: null, channel: null, offset: 0, limit: 200 },
+  config: {},        // 工程配置(总线/波特率/文件/通道映射)
+  channels: [],      // [{channel, frames, dbc, messages}]
 };
 
 function showTip(msg) { document.getElementById("st-tip").textContent = msg; }
@@ -314,7 +315,28 @@ async function fillConfig() {
     .map(f => `<option value="${f.name}">${f.name}</option>`).join("");
   blfSel.value = cfg.blf || state.blf || "";
   dbcSel.value = cfg.dbc || state.dbc || "";
+  renderChanConfig(files.filter(f => f.kind === ".dbc"));
   document.getElementById("config-tip").textContent = "";
+}
+
+/* 配置抽屉:通道 DBC 区(每通道一个下拉) */
+function renderChanConfig(dbcs) {
+  const box = document.getElementById("cfg-channels");
+  if (!state.channels.length) {
+    box.innerHTML = `<div class="hint">加载 BLF 后显示通道…</div>`;
+    return;
+  }
+  const chanCfg = state.config.channels || {};
+  box.innerHTML = state.channels.map(ch => {
+    const cur = chanCfg[String(ch.channel)] || ch.dbc || "";
+    const optsHtml = '<option value="">— DBC —</option>' + dbcs.map(d =>
+      `<option value="${d.name}" ${d.name === cur ? "selected" : ""}>${d.name}</option>`).join("");
+    return `<div class="chan-row">
+      <span class="chan-tag">CH${ch.channel}</span>
+      <span class="chan-frames">${ch.frames.toLocaleString()} 帧</span>
+      <select data-chan="${ch.channel}">${optsHtml}</select>
+    </div>`;
+  }).join("");
 }
 
 function syncBusTypeUI() {
@@ -324,12 +346,18 @@ function syncBusTypeUI() {
 
 async function saveConfig() {
   const tip = document.getElementById("config-tip");
+  // 收集每通道 DBC 映射
+  const channels = {};
+  document.querySelectorAll("#cfg-channels select[data-chan]").forEach(s => {
+    if (s.value) channels[s.dataset.chan] = s.value;
+  });
   const payload = {
     bus_type: document.getElementById("cfg-bus-type").value,
     baudrate_arb: parseInt(document.getElementById("cfg-baud-arb").value, 10),
     baudrate_data: parseInt(document.getElementById("cfg-baud-data").value, 10),
     blf: document.getElementById("cfg-blf").value || null,
     dbc: document.getElementById("cfg-dbc").value || null,
+    channels,
   };
   if (!payload.blf || !payload.dbc) {
     tip.textContent = "请选择 BLF 和 DBC 文件";
@@ -367,10 +395,18 @@ async function loadFiles() {
   if (state.uplot) { state.uplot.destroy(); state.uplot = null; }
   document.getElementById("chart").innerHTML = "";
   document.getElementById("ro-signals").innerHTML = "";
-  state.trace = { frameId: null, offset: 0, limit: 200 };
+  state.trace = { frameId: null, channel: null, offset: 0, limit: 200 };
 
   state.stats = await api(`/api/blf/${state.blf}/stats`);
   state.t0 = state.stats.first_timestamp || 0;   // 绝对时间基准:曲线/读数/表格显示相对时间
+  // 构建通道列表:每通道绑定 DBC(优先通道映射,其次默认 dbc)
+  const chanCfg = state.config.channels || {};
+  state.channels = (state.stats.channels || [{ channel: 0, frames: state.stats.total_frames }]).map(c => ({
+    channel: c.channel,
+    frames: c.frames,
+    dbc: chanCfg[String(c.channel)] || state.config.dbc || state.dbc,
+    messages: null,
+  }));
   document.getElementById("st-frames").textContent = `帧数 ${state.stats.total_frames}`;
   document.getElementById("st-duration").textContent = `时长 ${state.stats.duration_s.toFixed(1)} s`;
   document.getElementById("st-ids").textContent = `报文数 ${state.stats.unique_ids}`;
@@ -380,64 +416,102 @@ async function loadFiles() {
 }
 
 async function loadDbcTree() {
-  const { messages } = await api(`/api/dbc/${state.dbc}/messages`);
   const tree = document.getElementById("msg-tree");
   tree.innerHTML = "";
-
-  // Trace 报文选择下拉
   const sel = document.getElementById("trace-msg");
-  sel.innerHTML = messages.map(m =>
-    `<option value="${m.frame_id}">${m.frame_id_hex} ${m.name}</option>`).join("");
+  sel.innerHTML = '<option value="">— 选择报文 —</option>';
 
-  for (const m of messages) {
-    const wrap = document.createElement("div");
-    wrap.className = "msg-item";
+  // 并行加载各通道 DBC 的报文列表
+  await Promise.all(state.channels.map(async (ch) => {
+    if (!ch.dbc) { ch.messages = []; return; }
+    try {
+      const { messages } = await api(`/api/dbc/${ch.dbc}/messages`);
+      ch.messages = messages;
+    } catch (e) {
+      ch.messages = [];
+      ch.error = e.message;
+    }
+  }));
 
+  for (const ch of state.channels) {
+    const g = document.createElement("div");
+    g.className = "chan-group";
     const head = document.createElement("div");
-    head.className = "msg-head";
-    head.innerHTML = `<span class="msg-id">${m.frame_id_hex}</span>
-      <span class="msg-name">${m.name}</span>
-      <span class="msg-count">${m.signal_count} 信号</span>`;
+    head.className = "chan-head";
+    head.innerHTML = `<span class="chan-head-title">通道 ${ch.channel}</span>
+      <span class="chan-head-info">${ch.frames.toLocaleString()} 帧</span>
+      <span class="chan-head-dbc">${ch.dbc || "未配置 DBC"}</span>`;
     head.onclick = () => {
-      const list = wrap.querySelector(".sig-list");
+      const list = g.querySelector(".chan-body");
       list.style.display = list.style.display === "none" ? "" : "none";
     };
-    wrap.appendChild(head);
+    g.appendChild(head);
 
-    const list = document.createElement("div");
-    list.className = "sig-list";
-    list.style.display = "none";
-    for (const s of m.signals) {
-      const item = document.createElement("div");
-      item.className = "sig-item";
-      item.innerHTML = `<span class="sig-dot"></span>
-        <span class="sig-name">${s}</span>
-        <span class="sig-unit">${m.frame_id_hex}</span>`;
-      item.onclick = () => toggleSignal(m, s, item);
-      list.appendChild(item);
+    const body = document.createElement("div");
+    body.className = "chan-body";
+    if (!ch.messages.length) {
+      body.innerHTML = `<div class="hint">${ch.error ? "DBC 加载失败: " + ch.error :
+        (ch.dbc ? "该 DBC 无报文" : "未配置 DBC,请在右侧配置中为该通道选择 DBC 文件")}</div>`;
     }
-    wrap.appendChild(list);
-    tree.appendChild(wrap);
+    for (const m of ch.messages) {
+      // Trace 下拉:选项值 = "frameId|channel"
+      const opt = document.createElement("option");
+      opt.value = `${m.frame_id}|${ch.channel}`;
+      opt.textContent = `CH${ch.channel} ${m.frame_id_hex} ${m.name}`;
+      sel.appendChild(opt);
+      const wrap = document.createElement("div");
+      wrap.className = "msg-item";
+
+      const mhead = document.createElement("div");
+      mhead.className = "msg-head";
+      mhead.innerHTML = `<span class="msg-id">${m.frame_id_hex}</span>
+        <span class="msg-name">${m.name}</span>
+        <span class="msg-count">${m.signal_count} 信号</span>`;
+      mhead.onclick = () => {
+        const list = wrap.querySelector(".sig-list");
+        list.style.display = list.style.display === "none" ? "" : "none";
+      };
+      wrap.appendChild(mhead);
+
+      const list = document.createElement("div");
+      list.className = "sig-list";
+      list.style.display = "none";
+      for (const s of m.signals) {
+        const item = document.createElement("div");
+        item.className = "sig-item";
+        item.innerHTML = `<span class="sig-dot"></span>
+          <span class="sig-name">${s}</span>
+          <span class="sig-unit">${m.frame_id_hex}</span>`;
+        item.onclick = () => toggleSignal(m, s, item, ch.channel);
+        list.appendChild(item);
+      }
+      wrap.appendChild(list);
+      body.appendChild(wrap);
+    }
+    g.appendChild(body);
+    tree.appendChild(g);
   }
   document.getElementById("tree-hint")?.remove();
 
-  // 自动选中第一个报文的前两个信号(demo 便利,展示多信号叠加)
-  if (messages.length > 0 && messages[0].signals.length >= 2) {
-    const first = document.querySelector(".msg-head");
-    first?.click();
-    const items = document.querySelectorAll(".sig-item");
-    toggleSignal(messages[0], messages[0].signals[0], items[0]);
-    toggleSignal(messages[0], messages[0].signals[1], items[1]);
-  } else if (messages.length > 0 && messages[0].signals.length > 0) {
-    toggleSignal(messages[0], messages[0].signals[0], document.querySelector(".sig-item"));
+  // 自动选中第一个通道的前两个信号(demo 便利)
+  const firstCh = state.channels.find(c => c.messages && c.messages.length);
+  if (firstCh && firstCh.messages.length > 0) {
+    const m0 = firstCh.messages[0];
+    if (m0.signals.length >= 2) {
+      const sigs = document.querySelectorAll(".chan-group .sig-item");
+      toggleSignal(m0, m0.signals[0], sigs[0], firstCh.channel);
+      toggleSignal(m0, m0.signals[1], sigs[1], firstCh.channel);
+    } else if (m0.signals.length > 0) {
+      toggleSignal(m0, m0.signals[0], document.querySelector(".chan-group .sig-item"), firstCh.channel);
+    }
   }
 
-  // 初始化 Trace 面板(默认选中第一个报文)
+  // 初始化 Trace 面板
   onTraceMsgChange();
 }
 
-async function toggleSignal(msg, signal, item) {
-  const existing = state.signals.find(s => s.signal === signal && s.frame_id === msg.frame_id);
+async function toggleSignal(msg, signal, item, channel) {
+  const existing = state.signals.find(s => s.signal === signal && s.frame_id === msg.frame_id && s.channel === channel);
   if (existing) {
     state.signals = state.signals.filter(s => s !== existing);
     item.classList.remove("active");
@@ -453,18 +527,21 @@ async function toggleSignal(msg, signal, item) {
   const used = new Set(state.signals.map(s => s.color));
   const color = PALETTE.find(c => !used.has(c)) || PALETTE[state.signals.length % PALETTE.length];
 
-  const detail = await api(`/api/dbc/${state.dbc}/messages/${msg.frame_id_hex}`);
+  const ch = state.channels.find(c => c.channel === channel);
+  const dbc = (ch && ch.dbc) || state.dbc;
+
+  const detail = await api(`/api/dbc/${dbc}/messages/${msg.frame_id_hex}`);
   const sigDef = detail.signals.find(s => s.name === signal);
   const unit = sigDef?.unit || "";
 
-  const data = await api(`/api/blf/${state.blf}/decode?dbc=${state.dbc}` +
-    `&frame_id=${msg.frame_id_hex}&signal=${encodeURIComponent(signal)}&max_points=200000`);
+  const data = await api(`/api/blf/${state.blf}/decode?dbc=${encodeURIComponent(dbc)}` +
+    `&frame_id=${msg.frame_id_hex}&signal=${encodeURIComponent(signal)}&channel=${channel}&max_points=200000`);
   // 绝对时间戳 → 相对时间(以日志起始为 0)
   data.times = data.times.map(t => t - state.t0);
   // 槽位分配须与 push 同步完成(避免并发请求拿到相同槽位)
   const usedSlots = new Set(state.signals.map(s => s.slot));
   const slot = [1, 2, 3, 4, 5, 6].find(i => !usedSlots.has(i));
-  state.signals.push({ frame_id: msg.frame_id, signal, unit, color, slot, data });
+  state.signals.push({ frame_id: msg.frame_id, signal, unit, color, slot, data, channel, dbc });
   draw();
 }
 
@@ -475,8 +552,12 @@ document.getElementById("btn-export").onclick = () => {
     return;
   }
   const s = state.signals[0];
-  window.location.href = `/api/blf/${state.blf}/export?dbc=${state.dbc}` +
-    `&frame_id=0x${s.frame_id.toString(16)}`;
+  const q = new URLSearchParams({
+    dbc: s.dbc || state.dbc,
+    frame_id: "0x" + s.frame_id.toString(16),
+    channel: String(s.channel),
+  });
+  window.location.href = `/api/blf/${state.blf}/export?${q.toString()}`;
 };
 
 document.getElementById("btn-reset").onclick = () => {
@@ -495,18 +576,30 @@ window.addEventListener("resize", () => resizeChart());   // 整窗缩放兜底
 
 /* ---------- Trace 表格 ---------- */
 function onTraceMsgChange() {
-  state.trace.frameId = parseInt(document.getElementById("trace-msg").value, 10);
+  const val = document.getElementById("trace-msg").value;
+  if (!val) { state.trace.frameId = null; return; }
+  const [fid, ch] = val.split("|");
+  state.trace.frameId = parseInt(fid, 10);
+  state.trace.channel = parseInt(ch, 10);
   state.trace.offset = 0;
   loadTrace();
 }
 
 async function loadTrace() {
   const fid = state.trace.frameId;
-  if (!fid) return;
+  const ch = state.trace.channel;
+  if (fid == null) {
+    document.getElementById("trace-body").innerHTML =
+      `<tr><td colspan="5" class="hint">请选择报文</td></tr>`;
+    return;
+  }
   const body = document.getElementById("trace-body");
   body.innerHTML = `<tr><td colspan="5" class="hint">加载中…</td></tr>`;
-  const r = await api(`/api/blf/${state.blf}/frames?dbc=${state.dbc}` +
-    `&frame_id=${fid}&limit=${state.trace.limit}&offset=${state.trace.offset}&decode=false`);
+  // 用该通道绑定的 DBC 解码帧
+  const chan = state.channels.find(c => c.channel === ch);
+  const dbc = (chan && chan.dbc) || state.dbc;
+  const r = await api(`/api/blf/${state.blf}/frames?dbc=${encodeURIComponent(dbc)}` +
+    `&frame_id=${fid}&channel=${ch}&limit=${state.trace.limit}&offset=${state.trace.offset}&decode=false`);
   document.getElementById("trace-info").textContent =
     `第 ${state.trace.offset + 1}-${state.trace.offset + r.returned} 帧`;
   document.getElementById("trace-prev").disabled = state.trace.offset === 0;

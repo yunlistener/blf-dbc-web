@@ -8,13 +8,16 @@ import can
 
 def decode_signal(path, db, frame_id: int, signal_name: str,
                   start: Optional[float] = None, end: Optional[float] = None,
-                  max_points: Optional[int] = None) -> dict:
-    """流式解码单个信号,返回 {times, values},支持时间区间与降采样。"""
+                  max_points: Optional[int] = None,
+                  channel: Optional[int] = None) -> dict:
+    """流式解码单个信号,返回 {times, values},支持时间区间/通道过滤与降采样。"""
     times: list[float] = []
     values: list[float] = []
 
     for msg in can.BLFReader(str(path)):
         if msg.arbitration_id != frame_id:
+            continue
+        if channel is not None and getattr(msg, "channel", 0) != channel:
             continue
         if start is not None and msg.timestamp < start:
             continue
@@ -39,6 +42,7 @@ def decode_signal(path, db, frame_id: int, signal_name: str,
         "frame_id": frame_id,
         "frame_id_hex": hex(frame_id),
         "signal": signal_name,
+        "channel": channel,
         "points": len(times),
         "times": times,
         "values": values,

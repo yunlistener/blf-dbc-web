@@ -14,6 +14,7 @@ from app.config import UPLOAD_DIR
 from app.parsers.blf_parser import stats as blf_stats
 from app.parsers.dbc_parser import load_database
 from app.services.decoder import decode_signal
+from app.api.config_api import _load as load_config
 
 router = APIRouter()
 
@@ -25,6 +26,21 @@ def _blf_path(name: str) -> Path:
     return path
 
 
+def _resolve_dbc(dbc: Optional[str], channel: Optional[int]) -> str:
+    """解析 DBC 文件名:显式传入优先;否则用该通道的映射配置;再否则用默认 dbc。"""
+    if dbc is None and channel is not None:
+        dbc = load_config().get("channels", {}).get(str(channel))
+    if dbc is None:
+        dbc = load_config().get("dbc")
+    if not dbc:
+        raise HTTPException(422,
+            f"通道 {channel} 未配置 DBC,请先在配置抽屉中设置")
+    path = UPLOAD_DIR / dbc
+    if not path.is_file():
+        raise HTTPException(404, f"DBC 文件不存在: {dbc}")
+    return dbc
+
+
 @router.get("/{name}/stats")
 def get_stats(name: str):
     try:
@@ -34,13 +50,13 @@ def get_stats(name: str):
 
 
 @router.get("/{name}/decode")
-def get_decode(name: str, dbc: str, frame_id: str, signal: str,
+def get_decode(name: str, dbc: Optional[str] = None, frame_id: str = "",
+               signal: str = "", channel: Optional[int] = None,
                start: Optional[float] = None, end: Optional[float] = None,
                max_points: Optional[int] = None):
     blf_path = _blf_path(name)
-    dbc_path = UPLOAD_DIR / dbc
-    if not dbc_path.is_file():
-        raise HTTPException(404, f"DBC 文件不存在: {dbc}")
+    dbc_name = _resolve_dbc(dbc, channel)
+    dbc_path = UPLOAD_DIR / dbc_name
 
     try:
         fid = int(frame_id, 0)
@@ -57,24 +73,25 @@ def get_decode(name: str, dbc: str, frame_id: str, signal: str,
     if not any(s.name == signal for s in msg.signals):
         raise HTTPException(404, f"报文 {hex(fid)} 无信号 {signal}")
 
-    result = decode_signal(blf_path, db, fid, signal, start, end, max_points)
+    result = decode_signal(blf_path, db, fid, signal, start, end, max_points,
+                           channel=channel)
     if not result["times"]:
-        raise HTTPException(404, f"BLF 中未解码到信号 {signal} 的数据(检查时间区间)")
+        raise HTTPException(404, f"BLF 中未解码到信号 {signal} 的数据(检查通道/时间区间)")
     return result
 
 
 @router.get("/{name}/frames")
-def get_frames(name: str, dbc: str, frame_id: str,
+def get_frames(name: str, dbc: Optional[str] = None, frame_id: str = "",
+               channel: Optional[int] = None,
                start: Optional[float] = None, end: Optional[float] = None,
                limit: int = 200, offset: int = 0,
-               decode: bool = True):
+               decode: bool = False):
     """Trace 帧列表:分页返回该报文的原始帧(时间戳/ID/DLC/数据/解码值)。"""
     if limit > 1000:
         raise HTTPException(422, "limit 最大 1000")
     blf_path = _blf_path(name)
-    dbc_path = UPLOAD_DIR / dbc
-    if not dbc_path.is_file():
-        raise HTTPException(404, f"DBC 文件不存在: {dbc}")
+    dbc_name = _resolve_dbc(dbc, channel)
+    dbc_path = UPLOAD_DIR / dbc_name
 
     try:
         fid = int(frame_id, 0)
@@ -89,6 +106,8 @@ def get_frames(name: str, dbc: str, frame_id: str,
     skipped = 0
     for m in can.BLFReader(str(blf_path)):
         if m.arbitration_id != fid:
+            continue
+        if channel is not None and getattr(m, "channel", 0) != channel:
             continue
         if start is not None and m.timestamp < start:
             continue
@@ -107,6 +126,7 @@ def get_frames(name: str, dbc: str, frame_id: str,
             "dlc": m.dlc,
             "data": m.data.hex(" ").upper() if m.data else "",
             "is_fd": bool(getattr(m, "is_fd", False)),
+            "channel": getattr(m, "channel", 0),
         }
         if decode:
             try:
@@ -114,19 +134,18 @@ def get_frames(name: str, dbc: str, frame_id: str,
             except Exception:
                 row["decoded"] = None
         frames.append(row)
-    return {"name": msg.name, "offset": offset, "limit": limit,
-            "returned": len(frames), "frames": frames}
+    return {"name": msg.name, "channel": channel, "offset": offset,
+            "limit": limit, "returned": len(frames), "frames": frames}
 
 
 @router.get("/{name}/export")
-def export_csv(name: str, dbc: str, frame_id: str,
-               signal: Optional[str] = None,
+def export_csv(name: str, dbc: Optional[str] = None, frame_id: str = "",
+               signal: Optional[str] = None, channel: Optional[int] = None,
                start: Optional[float] = None, end: Optional[float] = None):
     """导出 CSV:时间 + 指定报文的一个/全部信号(同报文信号共享时间戳)。"""
     blf_path = _blf_path(name)
-    dbc_path = UPLOAD_DIR / dbc
-    if not dbc_path.is_file():
-        raise HTTPException(404, f"DBC 文件不存在: {dbc}")
+    dbc_name = _resolve_dbc(dbc, channel)
+    dbc_path = UPLOAD_DIR / dbc_name
 
     try:
         fid = int(frame_id, 0)
@@ -145,6 +164,8 @@ def export_csv(name: str, dbc: str, frame_id: str,
     for m in can.BLFReader(str(blf_path)):
         if m.arbitration_id != fid:
             continue
+        if channel is not None and getattr(m, "channel", 0) != channel:
+            continue
         if start is not None and m.timestamp < start:
             continue
         if end is not None and m.timestamp > end:
@@ -157,6 +178,7 @@ def export_csv(name: str, dbc: str, frame_id: str,
         count += 1
 
     content = "\ufeff" + buf.getvalue()  # UTF-8 BOM,方便 Excel 识别中文
-    filename = f"{Path(name).stem}_{hex(fid)}_{len(signals)}sig.csv"
+    ch_tag = f"_ch{channel}" if channel is not None else ""
+    filename = f"{Path(name).stem}{ch_tag}_{hex(fid)}_{len(signals)}sig.csv"
     return Response(content=content, media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": f"attachment; filename={filename}"})

@@ -8,8 +8,9 @@ import can
 
 
 def stats(path: Union[str, Path]) -> dict:
-    """单遍扫描 BLF,返回帧数/时间范围/错误帧/按 ID 聚合统计。"""
+    """单遍扫描 BLF,返回帧数/时间范围/错误帧/按 ID 聚合统计/通道分布。"""
     by_id: dict[int, dict] = {}
+    channels: dict[int, int] = {}
     total = fd = error = remote = 0
     first_ts = last_ts = None
 
@@ -19,6 +20,9 @@ def stats(path: Union[str, Path]) -> dict:
             first_ts = ts
         last_ts = ts
         total += 1
+
+        ch = getattr(msg, "channel", 0)
+        channels[ch] = channels.get(ch, 0) + 1
 
         if getattr(msg, "is_error_frame", False):
             error += 1
@@ -54,5 +58,6 @@ def stats(path: Union[str, Path]) -> dict:
         "last_timestamp": last_ts,
         "duration_s": round(last_ts - first_ts, 4) if first_ts is not None else 0.0,
         "unique_ids": len(ids),
+        "channels": [{"channel": ch, "frames": n} for ch, n in sorted(channels.items())],
         "by_id": ids,
     }

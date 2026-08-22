@@ -103,6 +103,23 @@ body {
 .sig-name { flex: 1; }
 .sig-unit { color: #5c6472; font-size: 11px; }
 
+/* 通道分组 */
+.chan-group { border-bottom: 1px solid #21252d; }
+.chan-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; cursor: pointer;
+  background: #171a20; color: #c9ced6; font-size: 12px;
+  user-select: none;
+}
+.chan-head:hover { background: #1d2129; }
+.chan-head-title { font-weight: 600; color: #4da3ff; }
+.chan-head-info { color: #5b6472; font-size: 11px; }
+.chan-head-dbc {
+  flex: 1; text-align: right; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+  color: #5c6472; font-size: 11px;
+}
+
 /* 主区 */
 #main { flex: 1; display: flex; flex-direction: column; min-width: 0; background: #16181d; }
 #chart { flex: 1; min-height: 200px; padding: 8px; }
@@ -307,6 +324,26 @@ td.t-data { color: #c9a86a; }
 }
 .config-row select:focus { outline: none; border-color: #4da3ff; }
 .config-hint { font-size: 12px; color: #5ad47a; min-height: 16px; margin-top: 2px; }
+
+/* 通道 DBC 配置 */
+.chan-list { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+.chan-row {
+  display: flex; align-items: center; gap: 8px;
+  background: #14171d; border: 1px solid #2c323d; border-radius: 5px;
+  padding: 6px 8px; font-size: 12px;
+}
+.chan-tag {
+  flex: none; min-width: 46px; text-align: center;
+  background: #2563eb; color: #fff; border-radius: 4px;
+  padding: 2px 6px; font-weight: 600; font-size: 11px;
+}
+.chan-frames { flex: none; color: #5b6472; font-size: 11px; }
+.chan-row select {
+  flex: 1; min-width: 0;
+  background: #1d2129; color: #e8ecf2;
+  border: 1px solid #2c323d; border-radius: 4px;
+  padding: 4px 6px; font-size: 12px;
+}
 
 /* 窄屏适配:隐藏侧边栏,让图表占满 */
 @media (max-width: 900px) {
