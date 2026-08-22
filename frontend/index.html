@@ -68,6 +68,52 @@
         <div id="stats-box" class="stats-box"><div class="hint">加载中…</div></div>
       </div>
     </main>
+
+    <!-- 配置:常驻边缘把手 + 抽屉(与主区域同层,展开时挤压主区域) -->
+    <div class="drawer-handle" id="cfg-handle" onclick="toggleConfigDrawer()" title="工程配置">
+      <span class="handle-icon">⚙</span><span class="handle-text">配置</span>
+    </div>
+    <div id="config-drawer" class="drawer">
+      <div class="drawer-body">
+        <div class="drawer-title">工程配置</div>
+        <div class="config-row">
+          <label>总线类型</label>
+          <select id="cfg-bus-type">
+            <option value="canfd">CAN FD</option>
+            <option value="can">CAN 经典</option>
+          </select>
+        </div>
+        <div class="config-row" id="row-baud-arb">
+          <label>仲裁段波特率</label>
+          <select id="cfg-baud-arb">
+            <option value="125000">125 kbit/s</option>
+            <option value="250000">250 kbit/s</option>
+            <option value="500000" selected>500 kbit/s</option>
+            <option value="1000000">1 Mbit/s</option>
+          </select>
+        </div>
+        <div class="config-row" id="row-baud-data">
+          <label>数据段波特率</label>
+          <select id="cfg-baud-data">
+            <option value="1000000">1 Mbit/s</option>
+            <option value="2000000" selected>2 Mbit/s</option>
+            <option value="5000000">5 Mbit/s</option>
+          </select>
+        </div>
+        <div class="config-row">
+          <label>BLF 日志</label>
+          <select id="cfg-blf"><option value="">— 请选择 —</option></select>
+        </div>
+        <div class="config-row">
+          <label>DBC 数据库</label>
+          <select id="cfg-dbc"><option value="">— 请选择 —</option></select>
+        </div>
+        <div class="config-hint" id="config-tip"></div>
+        <div class="drawer-actions">
+          <button class="btn primary" onclick="saveConfig()">保存并应用</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- 底部状态栏 -->
@@ -96,50 +142,6 @@
   </div>
 
   <!-- 配置抽屉(嵌入主页面,点击右边缘展开/收起) -->
-  <div id="config-drawer" class="drawer">
-    <div class="drawer-handle" id="cfg-handle" onclick="toggleConfigDrawer()" title="工程配置">
-      <span class="handle-icon">⚙</span><span class="handle-text">配置</span>
-    </div>
-    <div class="drawer-body">
-      <div class="drawer-title">工程配置</div>
-      <div class="config-row">
-        <label>总线类型</label>
-        <select id="cfg-bus-type">
-          <option value="canfd">CAN FD</option>
-          <option value="can">CAN 经典</option>
-        </select>
-      </div>
-      <div class="config-row" id="row-baud-arb">
-        <label>仲裁段波特率</label>
-        <select id="cfg-baud-arb">
-          <option value="125000">125 kbit/s</option>
-          <option value="250000">250 kbit/s</option>
-          <option value="500000" selected>500 kbit/s</option>
-          <option value="1000000">1 Mbit/s</option>
-        </select>
-      </div>
-      <div class="config-row" id="row-baud-data">
-        <label>数据段波特率</label>
-        <select id="cfg-baud-data">
-          <option value="1000000">1 Mbit/s</option>
-          <option value="2000000" selected>2 Mbit/s</option>
-          <option value="5000000">5 Mbit/s</option>
-        </select>
-      </div>
-      <div class="config-row">
-        <label>BLF 日志</label>
-        <select id="cfg-blf"><option value="">— 请选择 —</option></select>
-      </div>
-      <div class="config-row">
-        <label>DBC 数据库</label>
-        <select id="cfg-dbc"><option value="">— 请选择 —</option></select>
-      </div>
-      <div class="config-hint" id="config-tip"></div>
-      <div class="drawer-actions">
-        <button class="btn primary" onclick="saveConfig()">保存并应用</button>
-      </div>
-    </div>
-  </div>
 
 <script src="vendor/uPlot.min.js"></script>
 <script src="js/app.js"></script>

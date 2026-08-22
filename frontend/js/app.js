@@ -282,10 +282,21 @@ async function toggleConfigDrawer() {
   const drawer = document.getElementById("config-drawer");
   if (drawer.classList.contains("open")) {
     drawer.classList.remove("open");   // 缩回
-    return;
+  } else {
+    await fillConfig();                // 展开前填充最新数据
+    drawer.classList.add("open");
   }
-  await fillConfig();                  // 展开前填充最新数据
-  drawer.classList.add("open");
+  // 抽屉展开/收起会挤压主区域宽度(不触发 window resize)→ 等动画结束后同步图表尺寸
+  setTimeout(resizeChart, 280);
+}
+
+function resizeChart() {
+  if (state.uplot) {
+    state.uplot.setSize({
+      width: Math.max(200, document.getElementById("chart").clientWidth - 16),
+      height: Math.max(200, document.getElementById("chart").clientHeight - 16),
+    });
+  }
 }
 
 function drawerOpen() {
@@ -489,14 +500,7 @@ let resizeTimer = null;
 window.addEventListener("resize", () => {
   // 防抖 + 防止 uPlot 内部布局变化触发 resize 造成递归
   clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => {
-    if (state.uplot) {
-      state.uplot.setSize({
-        width: Math.max(200, document.getElementById("chart").clientWidth - 16),
-        height: Math.max(200, document.getElementById("chart").clientHeight - 16),
-      });
-    }
-  }, 150);
+  resizeTimer = setTimeout(resizeChart, 150);
 });
 
 /* ---------- Trace 表格 ---------- */
