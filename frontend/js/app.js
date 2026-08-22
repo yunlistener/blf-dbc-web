@@ -324,20 +324,50 @@ async function fillConfig() {
     .filter(f => f.kind === ".blf")
     .map(f => `<option value="${f.name}">${f.name}</option>`).join("");
   blfSel.value = cfg.blf || state.blf || "";
-  renderChanConfig(files.filter(f => f.kind === ".dbc"));
+  await refreshBlfViews(files);
   document.getElementById("config-tip").textContent = "";
 }
 
-/* 配置抽屉:通道 DBC 区(每通道一个下拉) */
-function renderChanConfig(dbcs) {
-  const box = document.getElementById("cfg-channels");
-  if (!state.channels.length) {
-    box.innerHTML = `<div class="hint">加载 BLF 后显示通道…</div>`;
+/* 刷新配置抽屉:Bus Log 基本信息 + 通道 DBC 预览(按当前选中的 BLF,不依赖已保存配置) */
+async function refreshBlfViews(files) {
+  const blfName = document.getElementById("cfg-blf").value;
+  const fileList = files || (await api("/api/files")).files;
+  const dbcs = fileList.filter(f => f.kind === ".dbc");
+  const infoBox = document.getElementById("blf-info");
+  const chanBox = document.getElementById("cfg-channels");
+  if (!blfName) {
+    infoBox.innerHTML = "";
+    chanBox.innerHTML = `<div class="hint">请选择 Bus Log 文件</div>`;
     return;
   }
-  const chanCfg = state.config.channels || {};
-  box.innerHTML = state.channels.map(ch => {
-    const cur = chanCfg[String(ch.channel)] || ch.dbc || "";
+  try {
+    const st = await api(`/api/blf/${blfName}/stats`);
+    const size = fileList.find(f => f.name === blfName)?.size || 0;
+    const t0 = st.first_timestamp;
+    infoBox.innerHTML =
+      `<div>帧数 <b>${st.total_frames.toLocaleString()}</b> · 时长 <b>${st.duration_s.toFixed(2)} s</b> · 通道 <b>${(st.channels || []).length}</b></div>` +
+      `<div>大小 <b>${(size / 1048576).toFixed(1)} MB</b> · 开始 <b>${t0 ? new Date(t0 * 1000).toLocaleString() : "—"}</b></div>` +
+      (st.error_frames ? `<div class="blf-err">⚠ 错误帧 ${st.error_frames}</div>` : "");
+    // 通道预览:按当前选中 BLF 的通道渲染;未保存的新选择 → 映射视为空(待重新配置)
+    const blfChanged = blfName !== (state.config.blf || null);
+    const chanCfg = blfChanged ? {} : (state.config.channels || {});
+    const chans = st.channels || [{ channel: 0, frames: st.total_frames }];
+    renderChanList(chans, chanCfg, dbcs);
+  } catch (e) {
+    infoBox.innerHTML = `<span class="blf-err">解析失败: ${e.message}</span>`;
+    chanBox.innerHTML = `<div class="hint">解析失败</div>`;
+  }
+}
+
+/* 渲染通道 DBC 下拉列表 */
+function renderChanList(chans, chanCfg, dbcs) {
+  const box = document.getElementById("cfg-channels");
+  if (!chans.length) {
+    box.innerHTML = `<div class="hint">该文件无通道数据</div>`;
+    return;
+  }
+  box.innerHTML = chans.map(ch => {
+    const cur = chanCfg[String(ch.channel)] || "";
     const optsHtml = '<option value="">— DBC —</option>' + dbcs.map(d =>
       `<option value="${d.name}" ${d.name === cur ? "selected" : ""}>${d.name}</option>`).join("");
     return `<div class="chan-row">
@@ -668,6 +698,8 @@ function switchTab(name) {
 }
 
 document.getElementById("cfg-bus-type").addEventListener("change", syncBusTypeUI);
+// 切换 Bus Log → 即时刷新文件信息 + 通道 DBC 预览(未保存前映射视为空)
+document.getElementById("cfg-blf").addEventListener("change", () => refreshBlfViews());
 
 async function init() {
   try { state.config = await api("/api/config"); } catch (e) { state.config = {}; }
