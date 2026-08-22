@@ -16,11 +16,12 @@
       <span id="file-dbc" class="file-chip">DBC: —</span>
     </div>
     <div class="spacer"></div>
+    <button id="btn-export" class="btn" title="导出当前报文全部信号为 CSV">导出 CSV</button>
     <button id="btn-reset" class="btn" title="重置时间轴">重置缩放</button>
   </div>
 
   <div id="body">
-    <!-- 左侧:报文/信号树(类似 CANoe 的 Database 面板) -->
+    <!-- 左侧:报文/信号树 -->
     <aside id="sidebar">
       <div class="panel-title">报文 / 信号</div>
       <div id="msg-tree" class="tree">
@@ -28,14 +29,41 @@
       </div>
     </aside>
 
-    <!-- 主区:Graphics 曲线窗口 -->
+    <!-- 主区:曲线 + 底部面板 -->
     <main id="main">
       <div id="chart"></div>
       <div id="cursor-panel" class="readout">
         <span class="ro-item"><b>时间</b> <span id="ro-time">—</span></span>
-        <span class="ro-item"><b>信号</b> <span id="ro-sig">—</span></span>
-        <span class="ro-item"><b>数值</b> <span id="ro-val">—</span></span>
-        <span class="ro-item"><b>单位</b> <span id="ro-unit">—</span></span>
+        <span id="ro-signals" class="ro-signals"></span>
+      </div>
+
+      <!-- 底部标签页 -->
+      <div id="tabs">
+        <div class="tab active" data-tab="trace" onclick="switchTab('trace')">Trace 报文流</div>
+        <div class="tab" data-tab="stats" onclick="switchTab('stats')">ID 统计</div>
+      </div>
+
+      <!-- Trace 面板 -->
+      <div id="panel-trace" class="panel">
+        <div class="trace-toolbar">
+          <select id="trace-msg" onchange="onTraceMsgChange()"></select>
+          <button id="trace-prev" class="btn" onclick="tracePage(-1)">← 上一页</button>
+          <button id="trace-next" class="btn" onclick="tracePage(1)">下一页 →</button>
+          <span id="trace-info" class="trace-info"></span>
+        </div>
+        <div class="trace-wrap">
+          <table class="trace" id="trace-table">
+            <thead><tr>
+              <th>时间(s)</th><th>ID</th><th>报文</th><th>DLC</th><th>数据(hex)</th><th>信号值</th>
+            </tr></thead>
+            <tbody id="trace-body"><tr><td colspan="6" class="hint">加载中…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ID 统计面板 -->
+      <div id="panel-stats" class="panel" style="display:none">
+        <div id="stats-box" class="stats-box"><div class="hint">加载中…</div></div>
       </div>
     </main>
   </div>
@@ -46,7 +74,7 @@
     <span id="st-duration">时长 —</span>
     <span id="st-ids">报文数 —</span>
     <span class="spacer"></span>
-    <span id="st-tip">点击左侧信号查看曲线 · 拖拽框选缩放 · 滚轮缩放</span>
+    <span id="st-tip">点击左侧信号查看曲线(可多选叠加)· 拖拽框选缩放 · 滚轮缩放</span>
   </div>
 
 <script src="vendor/uPlot.min.js"></script>
