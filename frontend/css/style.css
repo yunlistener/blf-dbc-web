@@ -222,3 +222,9 @@ td.t-decoded .dv { margin-right: 12px; }
 
 /* uPlot 深色适配 */
 .uplot .u-title { color: #c9ced6; }
+
+/* 窄屏适配:隐藏侧边栏,让图表占满 */
+@media (max-width: 900px) {
+  #sidebar { display: none; }
+  #body { flex-direction: column; }
+}

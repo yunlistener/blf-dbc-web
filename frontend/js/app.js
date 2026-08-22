@@ -100,8 +100,8 @@ function applySeries(s) {
 function makeUplotOpts() {
   const el = document.getElementById("chart");
   return {
-    width: el.clientWidth - 16,
-    height: el.clientHeight - 16,
+    width: Math.max(200, el.clientWidth - 16),   // 防止窄窗口下宽度为负
+    height: Math.max(200, el.clientHeight - 16),
     legend: { show: false },
     scales: { x: { time: false }, y: { auto: false } },
     axes: [
