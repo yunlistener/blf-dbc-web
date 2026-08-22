@@ -46,6 +46,7 @@ function onCursorMove(u, x, y) {
 
 function draw() {
   const u = state.uplot;
+  const el = document.getElementById("chart");
   if (!state.signals.length) {
     if (u) {
       for (let i = 1; i <= MAX_SERIES; i++) u.setSeries(i, { show: false });
@@ -70,8 +71,19 @@ function draw() {
     per[s.slot] = v;
   }
   if (!u) {
-    state.uplot = new uPlot(makeUplotOpts(), [x, ...Array(MAX_SERIES).fill([])],
-      document.getElementById("chart"));
+    state.uplot = new uPlot(
+      makeUplotOpts(),
+      [x, ...Array(MAX_SERIES).fill([])],
+      el);
+    // 强制 canvas 物理尺寸 = 逻辑尺寸 × pxRatio(修正创建时 canvas 尺寸异常的问题)
+    const cv = el.querySelector("canvas");
+    if (cv) {
+      cv.width = Math.round(state.uplot.width * uPlot.pxRatio);
+      cv.height = Math.round(state.uplot.height * uPlot.pxRatio);
+      cv.style.width = state.uplot.width + "px";
+      cv.style.height = state.uplot.height + "px";
+    }
+    state.uplot.redraw();
   }
   // 每次绘制都同步系列显示配置(新加入的信号可能晚于创建)
   state.signals.forEach(s => applySeries(s));
@@ -85,9 +97,10 @@ function draw() {
     hi = Math.max(hi, ...s.data.values);
   }
   if (isFinite(lo)) state.uplot.setScale("y", lo === hi ? { min: lo - 1, max: hi + 1 } : { min: lo, max: hi });
-  // 手动刷新读数面板(无鼠标事件时也显示光标处各信号值)
+  // 手动刷新读数面板(注意:bbox 是物理像素,须除以 pxRatio 转 CSS 像素)
   const b = state.uplot.bbox;
-  state.uplot.setCursor({ left: b.width / 2, top: b.height / 2 });
+  const pxr = uPlot.pxRatio || 1;
+  onCursorMove(state.uplot, b.width / pxr / 2, b.height / pxr / 2);
 }
 
 /* 更新/隐藏某个系列槽位的显示配置 */
@@ -103,7 +116,10 @@ function makeUplotOpts() {
     width: Math.max(200, el.clientWidth - 16),   // 防止窄窗口下宽度为负
     height: Math.max(200, el.clientHeight - 16),
     legend: { show: false },
-    scales: { x: { time: false }, y: { auto: false } },
+    scales: {
+      x: { time: false },   // auto 保持默认,由数据自动确定范围
+      y: { auto: false },
+    },
     axes: [
       { stroke: "#8a93a3", grid: { stroke: "#242830", width: 1 },
         ticks: { stroke: "#3a4150" }, font: "11px ui-monospace, Menlo",
@@ -265,13 +281,18 @@ document.getElementById("btn-reset").onclick = () => {
     state.uplot.setScale("x", { min: x[0], max: x[x.length - 1] });
   }
 };
+let resizeTimer = null;
 window.addEventListener("resize", () => {
-  if (state.uplot) {
-    state.uplot.setSize({
-      width: document.getElementById("chart").clientWidth - 16,
-      height: document.getElementById("chart").clientHeight - 16,
-    });
-  }
+  // 防抖 + 防止 uPlot 内部布局变化触发 resize 造成递归
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    if (state.uplot) {
+      state.uplot.setSize({
+        width: Math.max(200, document.getElementById("chart").clientWidth - 16),
+        height: Math.max(200, document.getElementById("chart").clientHeight - 16),
+      });
+    }
+  }, 150);
 });
 
 /* ---------- Trace 表格 ---------- */
