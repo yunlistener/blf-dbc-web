@@ -440,7 +440,7 @@ async function loadDbcTree() {
     head.className = "chan-head";
     head.innerHTML = `<span class="chan-head-title">通道 ${ch.channel}</span>
       <span class="chan-head-info">${ch.frames.toLocaleString()} 帧</span>
-      <span class="chan-head-dbc">${ch.dbc || "未配置 DBC"}</span>`;
+      <span class="chan-head-dbc" title="${ch.dbc || "未配置 DBC"}">${ch.dbc || "未配置 DBC"}</span>`;
     head.onclick = () => {
       const list = g.querySelector(".chan-body");
       list.style.display = list.style.display === "none" ? "" : "none";
