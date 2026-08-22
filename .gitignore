@@ -16,3 +16,4 @@ data/uploads/*
 # 环境/密钥
 .env
 *.pem
+backend/data/uploads/
