@@ -277,8 +277,22 @@ function makeUplotOpts() {
   };
 }
 
-/* ---------- 配置 ---------- */
-async function openConfig() {
+/* ---------- 配置抽屉 ---------- */
+async function toggleConfigDrawer() {
+  const drawer = document.getElementById("config-drawer");
+  if (drawer.classList.contains("open")) {
+    drawer.classList.remove("open");   // 缩回
+    return;
+  }
+  await fillConfig();                  // 展开前填充最新数据
+  drawer.classList.add("open");
+}
+
+function drawerOpen() {
+  return document.getElementById("config-drawer").classList.contains("open");
+}
+
+async function fillConfig() {
   const cfg = state.config || {};
   document.getElementById("cfg-bus-type").value = cfg.bus_type || "canfd";
   const arb = document.getElementById("cfg-baud-arb");
@@ -301,11 +315,6 @@ async function openConfig() {
   blfSel.value = cfg.blf || state.blf || "";
   dbcSel.value = cfg.dbc || state.dbc || "";
   document.getElementById("config-tip").textContent = "";
-  document.getElementById("config-modal").style.display = "flex";
-}
-
-function closeConfig() {
-  document.getElementById("config-modal").style.display = "none";
 }
 
 function syncBusTypeUI() {
@@ -332,9 +341,9 @@ async function saveConfig() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    tip.textContent = "已保存,正在应用…";
-    closeConfig();
+    document.getElementById("config-drawer").classList.remove("open");  // 保存后缩回
     await loadFiles();   // loadFiles 会用 state.config 重新加载
+    showTip("配置已保存并应用");
   } catch (e) {
     tip.textContent = "保存失败: " + e.message;
   }

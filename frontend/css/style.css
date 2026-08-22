@@ -265,8 +265,45 @@ td.t-decoded .dv { margin-right: 12px; }
 .btn.primary:hover { background: #1d4ed8; }
 .btn.primary:disabled { opacity: .5; cursor: not-allowed; }
 
-/* 配置模态 */
-.config-box { width: 460px; }
+/* 配置抽屉(嵌入主页面,右边缘展开/收起) */
+.drawer {
+  position: fixed;
+  top: 0; right: 0; bottom: 0;
+  width: 340px;
+  transform: translateX(100%);        /* 默认缩回,只露出手柄 */
+  transition: transform .25s ease;
+  z-index: 90;
+}
+.drawer.open { transform: translateX(0); }   /* 展开:面板滑入 */
+.drawer-handle {
+  position: absolute;
+  left: -30px; top: 50%;
+  transform: translateY(-50%);
+  width: 30px; padding: 14px 0;
+  background: #1e2128; border: 1px solid #2b2f38; border-right: none;
+  border-radius: 8px 0 0 8px;
+  cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  color: #8a93a3; font-size: 11px;
+  user-select: none;
+  box-shadow: -2px 0 8px rgba(0,0,0,.3);
+}
+.drawer-handle:hover { background: #262b34; color: #4da3ff; }
+.handle-icon { font-size: 15px; }
+.drawer-body {
+  height: 100%;
+  background: #1d2129; border-left: 1px solid #2c323d;
+  padding: 14px 16px;
+  overflow-y: auto;
+  box-shadow: -6px 0 20px rgba(0,0,0,.35);
+}
+.drawer-title {
+  font-size: 14px; font-weight: 600; color: #e8ecf2;
+  margin-bottom: 14px;
+  padding-bottom: 10px; border-bottom: 1px solid #2c323d;
+}
+.drawer-actions { display: flex; justify-content: flex-end; margin-top: 14px; }
+
 .config-row {
   display: flex; align-items: center; gap: 12px;
   margin-bottom: 10px; font-size: 13px;

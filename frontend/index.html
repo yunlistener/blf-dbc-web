@@ -16,7 +16,7 @@
       <span id="file-dbc" class="file-chip">DBC: —</span>
     </div>
     <div class="spacer"></div>
-    <button id="btn-config" class="btn" onclick="openConfig()" title="总线/波特率/文件配置">⚙ 配置</button>
+    <button id="btn-config" class="btn" onclick="toggleConfigDrawer()" title="总线/波特率/文件配置">⚙ 配置</button>
     <button id="btn-upload" class="btn" onclick="openUpload()" title="上传 BLF / DBC 文件">上传文件</button>
     <button id="btn-export" class="btn" title="导出当前报文全部信号为 CSV">导出 CSV</button>
     <button id="btn-reset" class="btn" title="重置时间轴">重置缩放</button>
@@ -95,10 +95,13 @@
     </div>
   </div>
 
-  <!-- 配置模态 -->
-  <div id="config-modal" class="modal" style="display:none">
-    <div class="modal-box config-box">
-      <div class="modal-title">工程配置<span class="modal-close" onclick="closeConfig()">×</span></div>
+  <!-- 配置抽屉(嵌入主页面,点击右边缘展开/收起) -->
+  <div id="config-drawer" class="drawer">
+    <div class="drawer-handle" id="cfg-handle" onclick="toggleConfigDrawer()" title="工程配置">
+      <span class="handle-icon">⚙</span><span class="handle-text">配置</span>
+    </div>
+    <div class="drawer-body">
+      <div class="drawer-title">工程配置</div>
       <div class="config-row">
         <label>总线类型</label>
         <select id="cfg-bus-type">
@@ -132,8 +135,7 @@
         <select id="cfg-dbc"><option value="">— 请选择 —</option></select>
       </div>
       <div class="config-hint" id="config-tip"></div>
-      <div class="modal-actions">
-        <button class="btn" onclick="closeConfig()">取消</button>
+      <div class="drawer-actions">
         <button class="btn primary" onclick="saveConfig()">保存并应用</button>
       </div>
     </div>
