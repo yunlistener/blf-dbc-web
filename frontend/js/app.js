@@ -156,7 +156,11 @@ function draw() {
     let j = 0;
     for (let i = 0; i < x.length; i++) {
       while (j < t.length && t[j] < x[i]) j++;
-      if (j < t.length && t[j] === x[i]) v[i] = s.data.values[j];
+      if (j < t.length && t[j] === x[i]) {
+        const raw = s.data.values[j];
+        // 值表信号 decode 返回 {name, value} 对象 → 取 value 数值画线
+        v[i] = (raw != null && typeof raw === "object" && "value" in raw) ? raw.value : raw;
+      }
     }
     per[s.slot] = v;
   }
@@ -215,7 +219,17 @@ function makeUplotOpts() {
     series: [{}, ...Array.from({ length: MAX_SERIES }, () => ({ show: false, scale: "y", auto: true }))],
     scales: {
       x: { time: false },   // auto 保持默认,由数据自动确定范围
-      y: {},                // y 全自动:自动聚合所有 series 数据确定范围
+      y: {
+        auto: true,
+        // 信号恒为同一值(如一直为 0)时 y 范围零跨度 → 扩开一格,否则画不出线。
+        // ⚠️ range 必须返回数组(uPlot 内部直接 e[0]/e[1],返回 null 会崩)
+        range: (u, dataMin, dataMax) => {
+          if (dataMin == null || !isFinite(dataMin)) return [0, 1];
+          if (dataMin === dataMax) return [dataMin - 1, dataMax + 1];
+          const pad = (dataMax - dataMin) * 0.1;
+          return [dataMin - pad, dataMax + pad];
+        },
+      },
     },
     axes: [
       { stroke: "#8a93a3", grid: { stroke: "#242830", width: 1 },
@@ -351,13 +365,15 @@ async function saveConfig() {
   document.querySelectorAll("#cfg-channels select[data-chan]").forEach(s => {
     if (s.value) channels[s.dataset.chan] = s.value;
   });
+  const blfChanged = document.getElementById("cfg-blf").value !== (state.config.blf || null);
   const payload = {
     bus_type: document.getElementById("cfg-bus-type").value,
     baudrate_arb: parseInt(document.getElementById("cfg-baud-arb").value, 10),
     baudrate_data: parseInt(document.getElementById("cfg-baud-data").value, 10),
     blf: document.getElementById("cfg-blf").value || null,
     dbc: document.getElementById("cfg-dbc").value || null,
-    channels,
+    // BLF 变更 → 通道映射重置(不同 BLF 的通道/网络不同,旧映射无意义)
+    channels: blfChanged ? {} : channels,
   };
   if (!payload.blf || !payload.dbc) {
     tip.textContent = "请选择 BLF 和 DBC 文件";
