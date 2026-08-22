@@ -164,7 +164,7 @@ body {
   font-size: 12px;
 }
 .trace-info { color: #5c6472; font-size: 12px; }
-.trace-wrap { flex: 1; overflow-y: auto; }
+.trace-wrap { flex: 1; overflow: auto; }   /* x/y 都允许滚动,窄容器下表格不溢出挤压 */
 table.trace {
   width: 100%;
   border-collapse: collapse;
@@ -189,8 +189,6 @@ table.trace tr:hover td { background: #1d2129; }
 td.t-time { color: #8a93a3; }
 td.t-id { color: #4da3ff; font-weight: 600; }
 td.t-data { color: #c9a86a; }
-td.t-decoded { white-space: normal; min-width: 260px; color: #9fb4c8; }
-td.t-decoded .dv { margin-right: 12px; }
 
 /* ID 统计 */
 .stats-box { padding: 12px 16px; }

@@ -266,7 +266,7 @@ async function toggleConfigDrawer() {
     // 展开后后台填充数据,失败只提示不阻塞
     fillConfig().catch(e => showTip("配置加载失败: " + e.message));
   }
-  setTimeout(resizeChart, 280);
+  // 图表尺寸由 ResizeObserver 逐帧跟随(见下方),无需手动 setTimeout
 }
 
 function resizeChart() {
@@ -485,12 +485,13 @@ document.getElementById("btn-reset").onclick = () => {
     state.uplot.setScale("x", { min: x[0], max: x[x.length - 1] });
   }
 };
-let resizeTimer = null;
-window.addEventListener("resize", () => {
-  // 防抖 + 防止 uPlot 内部布局变化触发 resize 造成递归
-  clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(resizeChart, 150);
-});
+// 用 ResizeObserver 观察图表容器:抽屉展开动画期间容器宽度逐帧变化,
+// canvas 同步逐帧跟随 → 收缩丝滑无跳变(uPlot setSize 轻量,小数据无压力)
+if ("ResizeObserver" in window) {
+  const ro = new ResizeObserver(() => resizeChart());
+  ro.observe(document.getElementById("chart"));
+}
+window.addEventListener("resize", () => resizeChart());   // 整窗缩放兜底
 
 /* ---------- Trace 表格 ---------- */
 function onTraceMsgChange() {
@@ -503,9 +504,9 @@ async function loadTrace() {
   const fid = state.trace.frameId;
   if (!fid) return;
   const body = document.getElementById("trace-body");
-  body.innerHTML = `<tr><td colspan="6" class="hint">加载中…</td></tr>`;
+  body.innerHTML = `<tr><td colspan="5" class="hint">加载中…</td></tr>`;
   const r = await api(`/api/blf/${state.blf}/frames?dbc=${state.dbc}` +
-    `&frame_id=${fid}&limit=${state.trace.limit}&offset=${state.trace.offset}`);
+    `&frame_id=${fid}&limit=${state.trace.limit}&offset=${state.trace.offset}&decode=false`);
   document.getElementById("trace-info").textContent =
     `第 ${state.trace.offset + 1}-${state.trace.offset + r.returned} 帧`;
   document.getElementById("trace-prev").disabled = state.trace.offset === 0;
@@ -514,18 +515,12 @@ async function loadTrace() {
   body.innerHTML = "";
   for (const f of r.frames) {
     const tr = document.createElement("tr");
-    let dec = "";
-    if (f.decoded) {
-      dec = Object.entries(f.decoded)
-        .map(([k, v]) => `<span class="dv">${k}=${fmtVal(v)}</span>`)
-        .join("");
-    }
     tr.innerHTML = `<td class="t-time">${(f.timestamp - state.t0).toFixed(3)}</td>
       <td class="t-id">${f.id_hex}</td><td>${f.name}</td><td>${f.dlc}</td>
-      <td class="t-data">${f.data}</td><td class="t-decoded">${dec}</td>`;
+      <td class="t-data">${f.data}</td>`;
     body.appendChild(tr);
   }
-  if (!r.returned) body.innerHTML = `<tr><td colspan="6" class="hint">无数据</td></tr>`;
+  if (!r.returned) body.innerHTML = `<tr><td colspan="5" class="hint">无数据</td></tr>`;
 }
 
 function tracePage(dir) {
