@@ -270,12 +270,22 @@ async function toggleConfigDrawer() {
 }
 
 function resizeChart() {
-  if (state.uplot) {
-    state.uplot.setSize({
-      width: Math.max(200, document.getElementById("chart").clientWidth - 16),
-      height: Math.max(200, document.getElementById("chart").clientHeight - 16),
-    });
+  if (!state.uplot) return;
+  const el = document.getElementById("chart");
+  const w = Math.max(200, el.clientWidth - 16);
+  const h = Math.max(200, el.clientHeight - 16);
+  state.uplot.setSize({ width: w, height: h });
+  // 高 DPI 修正:setSize 后手动同步 canvas 物理尺寸(否则 canvas 不跟随容器,
+  // 抽屉展开时曲线区域不收缩,溢出部分被抽屉盖住,看起来像覆盖)
+  const cv = el.querySelector("canvas");
+  if (cv) {
+    const pxr = uPlot.pxRatio || 1;
+    cv.width = Math.round(w * pxr);
+    cv.height = Math.round(h * pxr);
+    cv.style.width = w + "px";
+    cv.style.height = h + "px";
   }
+  state.uplot.redraw();
 }
 
 function drawerOpen() {
