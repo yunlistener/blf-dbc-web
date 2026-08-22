@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# macOS
+.DS_Store
+
+# 运行时数据(除测试数据外)
+data/uploads/*
+!data/uploads/test.dbc
+!data/uploads/test.blf
+
+# 环境/密钥
+.env
+*.pem
