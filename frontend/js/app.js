@@ -125,10 +125,16 @@ function onCursorMove(u, x, y) {
   box.innerHTML = "";
   state.signals.forEach(s => {
     const v = u.data[s.slot] ? u.data[s.slot][idx] : null;
+    let display = fmtVal(v);
+    // 值表信号:数值 → 查 choices 显示 名称(值),如 Valid(0)
+    if (v != null && typeof v === "number" && s.choices) {
+      const c = s.choices[String(v)];
+      if (c && c.name) display = `${c.name}(${v})`;
+    }
     const div = document.createElement("span");
     div.className = "ro-sig-val";
     div.innerHTML = `<span class="dot" style="background:${s.color}"></span>
-      ${s.signal}: <b>${fmtVal(v)}</b>
+      ${s.signal}: <b>${display}</b>
       <span class="u">${s.unit || ""}</span>`;
     box.appendChild(div);
   });
@@ -577,6 +583,8 @@ async function toggleSignal(msg, signal, item, channel) {
   const detail = await api(`/api/dbc/${dbc}/messages/${msg.frame_id_hex}`);
   const sigDef = detail.signals.find(s => s.name === signal);
   const unit = sigDef?.unit || "";
+  // 值表信号:保存 choices 映射 {raw值: {name, value}},读数时显示名称
+  const choices = sigDef?.choices || null;
 
   const data = await api(`/api/blf/${state.blf}/decode?dbc=${encodeURIComponent(dbc)}` +
     `&frame_id=${msg.frame_id_hex}&signal=${encodeURIComponent(signal)}&channel=${channel}&max_points=200000`);
@@ -585,7 +593,7 @@ async function toggleSignal(msg, signal, item, channel) {
   // 槽位分配须与 push 同步完成(避免并发请求拿到相同槽位)
   const usedSlots = new Set(state.signals.map(s => s.slot));
   const slot = [1, 2, 3, 4, 5, 6].find(i => !usedSlots.has(i));
-  state.signals.push({ frame_id: msg.frame_id, signal, unit, color, slot, data, channel, dbc });
+  state.signals.push({ frame_id: msg.frame_id, signal, unit, color, slot, data, channel, dbc, choices });
   draw();
 }
 
