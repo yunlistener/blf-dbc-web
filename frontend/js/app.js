@@ -259,13 +259,13 @@ function makeUplotOpts() {
 /* ---------- 配置抽屉 ---------- */
 async function toggleConfigDrawer() {
   const drawer = document.getElementById("config-drawer");
-  if (drawer.classList.contains("open")) {
-    drawer.classList.remove("open");   // 缩回
-  } else {
-    await fillConfig();                // 展开前填充最新数据
-    drawer.classList.add("open");
+  const opening = !drawer.classList.contains("open");
+  // 立即切换展开/收起(同步),不等待网络 —— 避免快速连点时的异步竞态
+  drawer.classList.toggle("open");
+  if (opening) {
+    // 展开后后台填充数据,失败只提示不阻塞
+    fillConfig().catch(e => showTip("配置加载失败: " + e.message));
   }
-  // 抽屉展开/收起会挤压主区域宽度(不触发 window resize)→ 等动画结束后同步图表尺寸
   setTimeout(resizeChart, 280);
 }
 
