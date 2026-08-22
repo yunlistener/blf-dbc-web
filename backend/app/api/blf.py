@@ -27,11 +27,9 @@ def _blf_path(name: str) -> Path:
 
 
 def _resolve_dbc(dbc: Optional[str], channel: Optional[int]) -> str:
-    """解析 DBC 文件名:显式传入优先;否则用该通道的映射配置;再否则用默认 dbc。"""
+    """解析 DBC 文件名:显式传入优先;否则用该通道的映射配置。"""
     if dbc is None and channel is not None:
         dbc = load_config().get("channels", {}).get(str(channel))
-    if dbc is None:
-        dbc = load_config().get("dbc")
     if not dbc:
         raise HTTPException(422,
             f"通道 {channel} 未配置 DBC,请先在配置抽屉中设置")

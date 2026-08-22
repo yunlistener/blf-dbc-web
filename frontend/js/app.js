@@ -320,15 +320,10 @@ async function fillConfig() {
   // 文件下拉
   const { files } = await api("/api/files");
   const blfSel = document.getElementById("cfg-blf");
-  const dbcSel = document.getElementById("cfg-dbc");
   blfSel.innerHTML = '<option value="">— 请选择 —</option>' + files
     .filter(f => f.kind === ".blf")
     .map(f => `<option value="${f.name}">${f.name}</option>`).join("");
-  dbcSel.innerHTML = '<option value="">— 请选择 —</option>' + files
-    .filter(f => f.kind === ".dbc")
-    .map(f => `<option value="${f.name}">${f.name}</option>`).join("");
   blfSel.value = cfg.blf || state.blf || "";
-  dbcSel.value = cfg.dbc || state.dbc || "";
   renderChanConfig(files.filter(f => f.kind === ".dbc"));
   document.getElementById("config-tip").textContent = "";
 }
@@ -371,12 +366,11 @@ async function saveConfig() {
     baudrate_arb: parseInt(document.getElementById("cfg-baud-arb").value, 10),
     baudrate_data: parseInt(document.getElementById("cfg-baud-data").value, 10),
     blf: document.getElementById("cfg-blf").value || null,
-    dbc: document.getElementById("cfg-dbc").value || null,
-    // BLF 变更 → 通道映射重置(不同 BLF 的通道/网络不同,旧映射无意义)
+    // BLF 变更 → 通道映射重置(不同 BLF 的通道/网络不同,旧映射无意义,默认为空)
     channels: blfChanged ? {} : channels,
   };
-  if (!payload.blf || !payload.dbc) {
-    tip.textContent = "请选择 BLF 和 DBC 文件";
+  if (!payload.blf) {
+    tip.textContent = "请选择 Bus Log 文件";
     return;
   }
   try {
@@ -398,13 +392,12 @@ async function loadFiles() {
   const { files } = await api("/api/files");
   const blfs = files.filter(f => f.kind === ".blf");
   const dbcs = files.filter(f => f.kind === ".dbc");
-  // 优先用配置指定的文件,否则取第一个
+  // 优先用配置指定的 Bus Log,否则取第一个
   const cfg = state.config || {};
   state.blf = (cfg.blf && blfs.find(f => f.name === cfg.blf)) ? cfg.blf : (blfs[0]?.name || null);
-  state.dbc = (cfg.dbc && dbcs.find(f => f.name === cfg.dbc)) ? cfg.dbc : (dbcs[0]?.name || null);
-  if (!state.blf || !state.dbc) throw new Error("缺少 BLF 或 DBC 文件,请先上传");
-  document.getElementById("file-blf").textContent = "BLF: " + state.blf;
-  document.getElementById("file-dbc").textContent = "DBC: " + state.dbc;
+  if (!state.blf) throw new Error("缺少 BLF 文件,请先上传");
+  document.getElementById("file-blf").textContent = "Bus Log: " + state.blf;
+  document.getElementById("file-dbc").textContent = `DBC 已上传: ${dbcs.length} 个`;
 
   // 重置分析状态(文件可能已切换)
   state.signals = [];
@@ -415,12 +408,12 @@ async function loadFiles() {
 
   state.stats = await api(`/api/blf/${state.blf}/stats`);
   state.t0 = state.stats.first_timestamp || 0;   // 绝对时间基准:曲线/读数/表格显示相对时间
-  // 构建通道列表:每通道绑定 DBC(优先通道映射,其次默认 dbc)
+  // 构建通道列表:每通道 DBC 只来自通道映射(不自动兜底,未配置即空,由用户指定)
   const chanCfg = state.config.channels || {};
   state.channels = (state.stats.channels || [{ channel: 0, frames: state.stats.total_frames }]).map(c => ({
     channel: c.channel,
     frames: c.frames,
-    dbc: chanCfg[String(c.channel)] || state.config.dbc || state.dbc,
+    dbc: chanCfg[String(c.channel)] || null,
     messages: null,
   }));
   document.getElementById("st-frames").textContent = `帧数 ${state.stats.total_frames}`;
@@ -544,7 +537,12 @@ async function toggleSignal(msg, signal, item, channel) {
   const color = PALETTE.find(c => !used.has(c)) || PALETTE[state.signals.length % PALETTE.length];
 
   const ch = state.channels.find(c => c.channel === channel);
-  const dbc = (ch && ch.dbc) || state.dbc;
+  const dbc = ch && ch.dbc;
+  if (!dbc) {
+    item.classList.remove("active");
+    showTip(`通道 ${channel} 未配置 DBC,请在右侧配置中为该通道选择 DBC 文件`);
+    return;
+  }
 
   const detail = await api(`/api/dbc/${dbc}/messages/${msg.frame_id_hex}`);
   const sigDef = detail.signals.find(s => s.name === signal);
@@ -569,7 +567,7 @@ document.getElementById("btn-export").onclick = () => {
   }
   const s = state.signals[0];
   const q = new URLSearchParams({
-    dbc: s.dbc || state.dbc,
+    dbc: s.dbc,
     frame_id: "0x" + s.frame_id.toString(16),
     channel: String(s.channel),
   });
@@ -611,9 +609,13 @@ async function loadTrace() {
   }
   const body = document.getElementById("trace-body");
   body.innerHTML = `<tr><td colspan="5" class="hint">加载中…</td></tr>`;
-  // 用该通道绑定的 DBC 解码帧
+  // 用该通道绑定的 DBC
   const chan = state.channels.find(c => c.channel === ch);
-  const dbc = (chan && chan.dbc) || state.dbc;
+  const dbc = chan && chan.dbc;
+  if (!dbc) {
+    body.innerHTML = `<tr><td colspan="5" class="hint">通道 ${ch} 未配置 DBC,请先在右侧配置中设置</td></tr>`;
+    return;
+  }
   const r = await api(`/api/blf/${state.blf}/frames?dbc=${encodeURIComponent(dbc)}` +
     `&frame_id=${fid}&channel=${ch}&limit=${state.trace.limit}&offset=${state.trace.offset}&decode=false`);
   document.getElementById("trace-info").textContent =
