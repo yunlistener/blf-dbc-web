@@ -66,6 +66,8 @@
           <input id="trace-sig-val" class="trace-input" placeholder="值 / 状态名" onkeydown="if(event.key==='Enter')doTraceSearch()">
           <button id="trace-search" class="btn" onclick="doTraceSearch()">搜索</button>
           <button id="trace-clear" class="btn" onclick="clearTraceSearch()" style="display:none">清除</button>
+          <button id="trace-range" class="btn" onclick="applyTraceRange()" title="按示波器当前缩放区间过滤">区间过滤</button>
+          <button id="trace-range-clear" class="btn" onclick="clearTraceRange()" style="display:none">清除区间</button>
           <button id="trace-prev" class="btn" onclick="tracePage(-1)">← 上一页</button>
           <button id="trace-next" class="btn" onclick="tracePage(1)">下一页 →</button>
           <span id="trace-info" class="trace-info"></span>
@@ -73,9 +75,9 @@
         <div class="trace-wrap">
           <table class="trace" id="trace-table">
             <thead><tr>
-              <th>时间(s)</th><th>ID</th><th>报文</th><th>DLC</th><th>数据(hex)</th>
+              <th>时间(s)</th><th>ID</th><th>报文</th><th>DLC</th><th>CH</th><th>数据(hex)</th>
             </tr></thead>
-            <tbody id="trace-body"><tr><td colspan="5" class="hint">加载中…</td></tr></tbody>
+            <tbody id="trace-body"><tr><td colspan="6" class="hint">加载中…</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -177,6 +179,6 @@
   <div id="cursor-tip" class="cursor-tip" style="display:none"></div>
 
 <script src="vendor/uPlot.min.js"></script>
-<script src="js/app.js?v=30"></script>
+<script src="js/app.js?v=31"></script>
 </body>
 </html>

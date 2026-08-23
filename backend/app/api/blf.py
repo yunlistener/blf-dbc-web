@@ -248,6 +248,14 @@ def signal_stats(name: str, dbc: Optional[str] = None, frame_id: str = "",
             key = v["name"] if isinstance(v, dict) and "name" in v else str(v)
             dist[key] = dist.get(key, 0) + 1
         out["choices_dist"] = dist
+    # 超范围检测:对比 DBC 定义的 min/max
+    if numeric and (sig.minimum is not None or sig.maximum is not None):
+        oor = sum(1 for v in numeric
+                  if (sig.minimum is not None and v < sig.minimum) or
+                     (sig.maximum is not None and v > sig.maximum))
+        out["out_of_range"] = oor
+        out["range_min"] = sig.minimum
+        out["range_max"] = sig.maximum
     return out
 
 

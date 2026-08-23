@@ -10,12 +10,13 @@ const state = {
   stats: null,
   signals: [],       // 已选信号 [{frame_id, signal, unit, color, slot, data, channel, dbc}]
   uplot: null,
-  trace: { frameId: null, channel: null, offset: 0, limit: 200 },
+  trace: { frameId: null, channel: null, offset: 0, limit: 200, search: null, range: null },
   config: {},        // 工程配置(总线/波特率/文件/通道映射)
   channels: [],      // [{channel, frames, dbc, messages}]
   hasData: null,     // Set<frame_id> 日志中实际出现的报文 ID
   lastCursorT: null, // 最后光标时刻(相对秒,信号行 tooltip 显示用)
   jitterMarks: [],   // [{t, color}] 抖动峰值时间点(相对秒),示波器 x 轴标记
+  anchorT: null,     // 测量锚点时间(相对秒);点击设置,再点清除
 };
 
 function showTip(msg) { document.getElementById("st-tip").textContent = msg; }
@@ -172,6 +173,12 @@ function onCursorMove(u, x, y) {
   state.lastCursorT = t;   // 记录最后光标时刻(信号行 tooltip 用)
   const idx = u.posToIdx(x);
   const rows = [`<div class="tip-row">时间 <b>${t.toFixed(3)} s</b></div>`];
+  // 双点测量:锚点存在时显示 Δt 与频率
+  if (state.anchorT != null) {
+    const dt = t - state.anchorT;
+    rows.push(`<div class="tip-row" style="color:#ffd75e">锚点 ${state.anchorT.toFixed(3)}s · Δ <b>${dt >= 0 ? "+" : ""}${dt.toFixed(3)} s</b>` +
+      (dt !== 0 ? ` (${(1 / Math.abs(dt)).toFixed(2)} Hz)` : "") + `</div>`);
+  }
   state.signals.forEach(s => {
     const v = u.data[s.slot] ? u.data[s.slot][idx] : null;
     rows.push(`<div class="tip-row"><span class="dot" style="background:${s.color}"></span>` +
@@ -416,24 +423,43 @@ function makeUplotOpts() {
           });
         }, { passive: false });
         u.over.addEventListener("mouseleave", hideCursorTip);   // 移出图表 → 隐藏 tooltip
+        // 双点测量:点击设置/清除锚点(黄色三角标记,移动光标显示 Δt)
+        u.over.addEventListener("click", (e) => {
+          state.anchorT = (state.anchorT == null) ? u.posToVal(e.offsetX, "x") : null;
+          u.redraw();
+        });
       }],
       // 抖动峰值时间点 → 时间轴顶部三角标记(受配置开关控制)
       draw: [(u) => {
-        if (!showJitterMarks()) return;
-        if (!state.jitterMarks || !state.jitterMarks.length) return;
         const ctx = u.ctx;
         ctx.save();
-        state.jitterMarks.forEach(m => {
-          const px = u.valToPos(m.t, "x", true);
-          if (px == null || !isFinite(px)) return;
-          ctx.fillStyle = m.color;
-          ctx.globalAlpha = 0.9;
-          ctx.beginPath();
-          ctx.moveTo(px - 4, 0);
-          ctx.lineTo(px + 4, 0);
-          ctx.lineTo(px, -7);
-          ctx.fill();
-        });
+        // 测量锚点(黄色)
+        if (state.anchorT != null) {
+          const px = u.valToPos(state.anchorT, "x", true);
+          if (px != null && isFinite(px)) {
+            ctx.fillStyle = "#ffd75e";
+            ctx.globalAlpha = 0.95;
+            ctx.beginPath();
+            ctx.moveTo(px - 4, 0);
+            ctx.lineTo(px + 4, 0);
+            ctx.lineTo(px, -7);
+            ctx.fill();
+          }
+        }
+        // 抖动峰值标记(信号色)
+        if (showJitterMarks() && state.jitterMarks && state.jitterMarks.length) {
+          state.jitterMarks.forEach(m => {
+            const px = u.valToPos(m.t, "x", true);
+            if (px == null || !isFinite(px)) return;
+            ctx.fillStyle = m.color;
+            ctx.globalAlpha = 0.9;
+            ctx.beginPath();
+            ctx.moveTo(px - 4, 0);
+            ctx.lineTo(px + 4, 0);
+            ctx.lineTo(px, -7);
+            ctx.fill();
+          });
+        }
         ctx.globalAlpha = 1;
         ctx.restore();
       }],
@@ -623,7 +649,7 @@ async function loadFiles() {
   document.getElementById("plot-wrap").innerHTML = "";
   hideCursorTip();
   document.getElementById("busload-box").dataset.loaded = "";   // 文件切换 → Bus Load 重新加载
-  state.trace = { frameId: null, channel: null, offset: 0, limit: 200, search: null };
+  state.trace = { frameId: null, channel: null, offset: 0, limit: 200, search: null, range: null };
 
   state.stats = await api(`/api/blf/${state.blf}/stats`);
   state.t0 = state.stats.first_timestamp || 0;   // 绝对时间基准:曲线/读数/表格显示相对时间
@@ -930,7 +956,16 @@ document.getElementById("btn-export").onclick = () => {
     frame_id: "0x" + s.frame_id.toString(16),
     channel: String(s.channel),
   });
-  window.location.href = `/api/blf/${state.blf}/export?${q.toString()}`;
+  // 缩放区间导出:示波器有缩放时,只导出当前 x 轴范围
+  if (state.uplot) {
+    const sx = state.uplot.scales.x;
+    if (sx.min != null && sx.max != null) {
+      q.set("start", String(sx.min));
+      q.set("end", String(sx.max));
+    }
+  }
+  window.open(`/api/blf/${state.blf}/export?${q}`, "_blank");
+  showTip("正在导出 CSV(按当前缩放区间)…");
 };
 
 document.getElementById("btn-reset").onclick = () => {
@@ -1020,25 +1055,45 @@ function clearTraceSearch() {
   loadTrace();
 }
 
+/* 按示波器当前缩放区间过滤 Trace(读取 uPlot x 轴范围) */
+function applyTraceRange() {
+  if (!state.uplot) { showTip("请先在示波器上缩放出区间"); return; }
+  const sx = state.uplot.scales.x;
+  if (sx.min == null || sx.max == null) { showTip("请先在示波器上缩放出区间"); return; }
+  state.trace.range = { start: sx.min, end: sx.max };
+  state.trace.offset = 0;
+  document.getElementById("trace-range-clear").style.display = "";
+  loadTrace();
+}
+function clearTraceRange() {
+  state.trace.range = null;
+  state.trace.offset = 0;
+  document.getElementById("trace-range-clear").style.display = "none";
+  loadTrace();
+}
+
 async function loadTrace() {
   const fid = state.trace.frameId;
   const ch = state.trace.channel;
   if (fid == null) {
     document.getElementById("trace-body").innerHTML =
-      `<tr><td colspan="5" class="hint">请选择报文</td></tr>`;
+      `<tr><td colspan="6" class="hint">请选择报文</td></tr>`;
     return;
   }
   const body = document.getElementById("trace-body");
-  body.innerHTML = `<tr><td colspan="5" class="hint">加载中…</td></tr>`;
+  body.innerHTML = `<tr><td colspan="6" class="hint">加载中…</td></tr>`;
   // 用该通道绑定的 DBC
   const chan = state.channels.find(c => c.channel === ch);
   const dbc = chan && chan.dbc;
   if (!dbc) {
-    body.innerHTML = `<tr><td colspan="5" class="hint">通道 ${ch} 未配置 DBC,请先在右侧配置中设置</td></tr>`;
+    body.innerHTML = `<tr><td colspan="6" class="hint">通道 ${ch} 未配置 DBC,请先在右侧配置中设置</td></tr>`;
     return;
   }
   let url = `/api/blf/${state.blf}/frames?dbc=${encodeURIComponent(dbc)}` +
     `&frame_id=${fid}&channel=${ch}&limit=${state.trace.limit}&offset=${state.trace.offset}&decode=false`;
+  if (state.trace.range) {
+    url += `&start=${state.trace.range.start}&end=${state.trace.range.end}`;
+  }
   if (state.trace.search) {
     url += `&sig_filter=${encodeURIComponent(state.trace.search.signal)}` +
            `&sig_value=${encodeURIComponent(state.trace.search.value)}`;
@@ -1057,11 +1112,13 @@ async function loadTrace() {
   for (const f of r.frames) {
     const tr = document.createElement("tr");
     tr.innerHTML = `<td class="t-time">${(f.timestamp - state.t0).toFixed(3)}</td>
-      <td class="t-id">${f.id_hex}</td><td>${f.name}</td><td>${f.dlc}</td>
+      <td class="t-id">${f.id_hex}</td><td>${f.name}</td>
+      <td>${f.dlc}${f.is_fd ? `<span class="fd-tag">FD</span>` : ""}</td>
+      <td>CH${f.channel}</td>
       <td class="t-data">${f.data}</td>`;
     body.appendChild(tr);
   }
-  if (!r.returned) body.innerHTML = `<tr><td colspan="5" class="hint">${state.trace.search ? "无匹配帧" : "无数据"}</td></tr>`;
+  if (!r.returned) body.innerHTML = `<tr><td colspan="6" class="hint">${state.trace.search ? "无匹配帧" : "无数据"}</td></tr>`;
 }
 
 function tracePage(dir) {
@@ -1189,9 +1246,11 @@ async function loadSigStats() {
     }
     // 信号统计表
     let html = `<table class="sig-stats"><thead><tr>
-      <th>信号</th><th>通道</th><th>点数</th><th>min</th><th>max</th><th>mean</th><th>std</th><th>最后值</th>
+      <th>信号</th><th>通道</th><th>点数</th><th>min</th><th>max</th><th>mean</th><th>std</th><th>最后值</th><th>超范围</th>
       </tr></thead><tbody>`;
     for (const { s, st } of rows) {
+      const oorTitle = st.range_min != null || st.range_max != null
+        ? `定义范围 [${st.range_min ?? "—"}, ${st.range_max ?? "—"}]` : "";
       html += `<tr>
         <td><span class="dot" style="background:${s.color};display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px"></span>${s.signal}</td>
         <td>CH${s.channel}</td>
@@ -1199,6 +1258,7 @@ async function loadSigStats() {
         <td>${fmtUnit(s, st.min)}</td><td>${fmtUnit(s, st.max)}</td>
         <td>${fmtUnit(s, st.mean)}</td><td>${fmtUnit(s, st.std)}</td>
         <td>${fmtUnit(s, st.last)}</td>
+        <td title="${oorTitle}" class="${(st.out_of_range ?? 0) > 0 ? "warn" : ""}">${st.out_of_range != null ? `${st.out_of_range} 个` : "—"}</td>
       </tr>`;
       if (st.choices_dist) {
         const dist = Object.entries(st.choices_dist)
