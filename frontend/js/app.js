@@ -316,6 +316,12 @@ async function restoreSelectedSignals() {
     const saved = JSON.parse(localStorage.getItem(LS_SIG) || "null");
     if (!saved || saved.blf !== state.blf || !saved.signals || !saved.signals.length) return 0;
     const items = Array.from(document.querySelectorAll(".chan-group .sig-item"));
+    // 恢复示波器 id 列表(含保存的 plotId,支持同信号多示波器)
+    const savedIds = [...new Set(saved.signals.map(r => r.plotId).filter(x => x != null))].sort((a, b) => a - b);
+    if (savedIds.length) {
+      state.plotIds = savedIds;
+      state.plotSeq = Math.max(state.plotSeq, ...savedIds) + 1;
+    }
     let restored = 0;
     for (const rec of saved.signals.slice(0, MAX_SERIES)) {
       const item = items.find(el =>
@@ -324,18 +330,10 @@ async function restoreSelectedSignals() {
         parseInt(el.closest(".msg-item").querySelector(".msg-id").textContent, 16) === rec.frame_id);
       const ch = state.channels.find(c => c.channel === rec.channel);
       const msg = ch && ch.messages ? ch.messages.find(m => m.frame_id === rec.frame_id) : null;
-      if (item && msg && state.hasData.has(rec.frame_id)) {
-        await toggleSignal(msg, rec.signal, item, rec.channel);
-        restored++;
+      if (msg && state.hasData.has(rec.frame_id)) {
+        const ok = await addSignal(msg, rec.signal, rec.channel, rec.plotId ?? null);
+        if (ok) { restored++; if (item) item.classList.add("active"); }
       }
-    }
-    // 恢复窗口分配:按保存的 plotId 分组(刷新后保持信号合并到同一示波器的关系)
-    const savedIds = saved.signals.map(r => r.plotId).filter(x => x != null);
-    if (savedIds.length && state.signals.length) {
-      state.plotIds = [...new Set(savedIds)].sort((a, b) => a - b);
-      state.signals.forEach((s, i) => { s.plotId = savedIds[i] ?? s.plotId; });
-      state.plotSeq = Math.max(state.plotSeq, ...state.plotIds) + 1;
-      draw();
     }
     return restored;
   } catch (e) {
@@ -519,11 +517,10 @@ function makePlotOpts(p) {
       scale: "y", auto: true, width: 2,
       points: { show: () => false },
     };
+    // 值表信号:折线图(默认 linear,离散值连线)。⚠️ 不用 uPlot.paths.stepped:
+    // 它内部依赖 scale.dir/ori,y 轴未配这些字段时 z=NaN → path 为空 → 曲线不渲染
     if (s.choices) {
-      // 值表信号:内置阶梯折线(离散状态保持到下一采样点),不显示散点
-      conf.paths = uPlot.paths.stepped({ align: 1 });
       conf.width = 1.5;
-      conf.points = { show: () => false };
     }
     return conf;
   })];
@@ -923,7 +920,6 @@ async function loadDbcTree() {
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem(LS_SIG) || "null"); } catch (e) { /* 忽略 */ }
   if (saved && saved.blf === state.blf) {
-    // 有记录(含清空后的空数组)→ 尊重用户选择,不自动选默认
     if (saved.signals && saved.signals.length) {
       const n = await restoreSelectedSignals();
       if (n > 0) showTip(`已恢复上次选择的 ${n} 个信号`);
@@ -1041,9 +1037,18 @@ function sortTree() {
 
 /* 核心:添加信号到指定示波器(plotId 为 null 时自动复用空示波器) */
 async function addSignal(msg, signal, channel, plotId) {
-  const existing = state.signals.find(s => s.signal === signal && s.frame_id === msg.frame_id && s.channel === channel);
+  // 先确定示波器:指定则用;未指定则复用空示波器,无空才新建
+  let pid = plotId;
+  if (pid == null) {
+    const usedPlotIds = new Set(state.signals.map(s => s.plotId));
+    const emptyPlot = state.plotIds.find(id => !usedPlotIds.has(id));
+    pid = emptyPlot != null ? emptyPlot : state.plotSeq++;
+    if (emptyPlot == null) state.plotIds.push(pid);
+  }
+  // 同一信号可显示在不同示波器;仅"同一信号 + 同一示波器"才算重复
+  const existing = state.signals.find(s => s.signal === signal && s.frame_id === msg.frame_id && s.channel === channel && s.plotId === pid);
   if (existing) {
-    showTip(`信号已在示波器 ${existing.plotId}`);
+    showTip(`信号已显示在示波器 ${pid}`);
     return false;
   }
   if (state.signals.length >= MAX_SERIES) {
@@ -1090,14 +1095,6 @@ async function addSignal(msg, signal, channel, plotId) {
                 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
                 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58,
                 59, 60, 61, 62, 63, 64].find(i => !usedSlots.has(i));
-  // 指定示波器;未指定则复用空示波器,无空才新建
-  let pid = plotId;
-  if (pid == null) {
-    const usedPlotIds = new Set(state.signals.map(s => s.plotId));
-    const emptyPlot = state.plotIds.find(id => !usedPlotIds.has(id));
-    pid = emptyPlot != null ? emptyPlot : state.plotSeq++;
-    if (emptyPlot == null) state.plotIds.push(pid);
-  }
   state.signals.push({ frame_id: msg.frame_id, signal, unit, color, slot, data, channel, dbc, choices, comment, senders, plotId: pid });
   saveSelectedSignals();
   draw();
@@ -1128,7 +1125,6 @@ function renderAddSignalList(q) {
   const box = document.getElementById("add-signal-list");
   box.innerHTML = "";
   const ql = (q || "").toLowerCase();
-  const addedKeys = new Set(state.signals.map(s => `${s.frame_id}|${s.signal}|${s.channel}`));
   for (const ch of state.channels) {
     for (const m of (ch.messages || [])) {
       const sigs = m.signals || [];
@@ -1150,18 +1146,18 @@ function renderAddSignalList(q) {
       };
       mdiv.appendChild(mhead);
       for (const s of sigs) {
-        const key = `${m.frame_id}|${s}|${ch.channel}`;
-        const added = addedKeys.has(key);
         const sdiv = document.createElement("div");
         sdiv.className = "add-sig";
-        if (added) {
-          sdiv.innerHTML = `<span class="sig-name" style="color:#5c6472">${s}</span> <span class="dim">已添加</span>`;
-          sdiv.style.cursor = "default";
-        } else if (!hasData) {
+        if (!hasData) {
           sdiv.innerHTML = `<span class="sig-name" style="color:#5c6472">${s}</span>`;
           sdiv.style.cursor = "default";
         } else {
-          sdiv.innerHTML = `<span class="sig-name">${s}</span>`;
+          // 允许同一信号显示在多个示波器;标注已显示位置
+          const where = state.signals
+            .filter(ss => ss.signal === s && ss.frame_id === m.frame_id && ss.channel === ch.channel)
+            .map(ss => `示波器 ${ss.plotId}`).join("、");
+          sdiv.innerHTML = `<span class="sig-name">${s}</span>` +
+            (where ? ` <span class="dim">已在 ${where}</span>` : "");
           sdiv.onclick = () => addSignalToPlot(addingPlot, m, s, ch.channel);
         }
         mdiv.appendChild(sdiv);
@@ -1172,14 +1168,15 @@ function renderAddSignalList(q) {
   if (!box.children.length) box.innerHTML = `<div class="hint">无匹配信号</div>`;
 }
 
-/* 信号树点击切换(保留给恢复流程使用) */
+/* 信号树点击切换:三元组增删(同信号在多示波器时点击树 = 移除所有该信号) */
 async function toggleSignal(msg, signal, item, channel) {
-  const existing = state.signals.find(s => s.signal === signal && s.frame_id === msg.frame_id && s.channel === channel);
-  if (existing) {
-    state.signals = state.signals.filter(s => s !== existing);
+  const dups = state.signals.filter(s => s.signal === signal && s.frame_id === msg.frame_id && s.channel === channel);
+  if (dups.length) {
+    state.signals = state.signals.filter(s => !(s.signal === signal && s.frame_id === msg.frame_id && s.channel === channel));
     if (item) item.classList.remove("active");
     saveSelectedSignals();
     draw();
+    if (currentTab() === "sigstats") loadSigStats();
     return;
   }
   if (item) item.classList.add("active");
