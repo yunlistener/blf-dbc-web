@@ -353,7 +353,9 @@ async function restoreSelectedSignals() {
 }
 
 /* ============ 多示波器示波器(CANoe 式) ============ */
+const diagTime = { draw: 0, lastDraw: 0, updates: 0 };
 function draw() {
+  const _t0 = performance.now();
   showPlaybar(state.signals.length > 0);   // 有信号才显示播放控制栏
   renderSigSidebar();   // 左侧已选信号列(含示波器分配下拉)
   if (!state.signals.length) {
@@ -363,6 +365,10 @@ function draw() {
     return;
   }
   syncPlots();
+  const _dt = performance.now() - _t0;
+  diagTime.lastDraw = _dt;
+  diagTime.draw = diagTime.draw * 0.9 + _dt * 0.1;
+  diagTime.updates++;
 }
 
 /* 按示波器 id 列表同步所有 plot 实例(含空示波器) */
@@ -646,7 +652,9 @@ function updateSeriesData(p) {
   if (key !== p._dkey) {
     p._dkey = key;
     applyXRangeNow(p);
+    const _u0 = performance.now();
     p.chart.update("none");
+    diagTime.lastUpdate = performance.now() - _u0;
   }
 }
 
@@ -1655,7 +1663,7 @@ function updateDiag() {
   const el = document.getElementById("play-diag");
   if (!el) return;
   const pts = Object.values(playState.data).reduce((a, d) => a + (d.times ? d.times.length : 0), 0);
-  el.textContent = `WS:${playState.ws ? playState.ws.readyState : "-"} 收:${diag.msgs}(st:${diag.state}/bt:${diag.batch}/pg:${diag.progress}) 点:${pts} t:${playState.t.toFixed(2)}s play:${playState.playing ? "Y" : "N"}`;
+  el.textContent = `WS:${playState.ws ? playState.ws.readyState : "-"} 收:${diag.msgs}(st:${diag.state}/bt:${diag.batch}/pg:${diag.progress}) 点:${pts} t:${playState.t.toFixed(2)}s play:${playState.playing ? "Y" : "N"} draw:${diagTime.lastDraw.toFixed(1)}ms upd:${(diagTime.lastUpdate || 0).toFixed(1)}ms`;
 }
 
 function connectReplay() {
