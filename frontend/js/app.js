@@ -313,6 +313,13 @@ function drawerOpen() {
   return document.getElementById("config-drawer").classList.contains("open");
 }
 
+/* 左侧信号树展开/收起(与右侧配置抽屉对称) */
+function toggleSidebar() {
+  const sb = document.getElementById("sidebar");
+  sb.classList.toggle("collapsed");
+  setTimeout(resizeChart, 280);   // 主区域宽度变化 → 同步图表
+}
+
 async function fillConfig() {
   const cfg = state.config || {};
   document.getElementById("cfg-bus-type").value = cfg.bus_type || "canfd";
@@ -483,12 +490,14 @@ async function loadDbcTree() {
     g.className = "chan-group";
     const head = document.createElement("div");
     head.className = "chan-head";
-    head.innerHTML = `<span class="chan-head-title">通道 ${ch.channel}</span>
+    head.innerHTML = `<span class="caret">▸</span><span class="chan-head-title">通道 ${ch.channel}</span>
       <span class="chan-head-info">${ch.frames.toLocaleString()} 帧</span>
       <span class="chan-head-dbc" title="${ch.dbc || "未配置 DBC"}">${ch.dbc || "未配置 DBC"}</span>`;
     head.onclick = () => {
       const list = g.querySelector(".chan-body");
-      list.style.display = list.style.display === "none" ? "" : "none";
+      const show = list.style.display === "none";
+      list.style.display = show ? "" : "none";
+      head.querySelector(".caret").textContent = show ? "▾" : "▸";
     };
     g.appendChild(head);
 
@@ -509,12 +518,14 @@ async function loadDbcTree() {
 
       const mhead = document.createElement("div");
       mhead.className = "msg-head";
-      mhead.innerHTML = `<span class="msg-id">${m.frame_id_hex}</span>
+      mhead.innerHTML = `<span class="caret">▸</span><span class="msg-id">${m.frame_id_hex}</span>
         <span class="msg-name">${m.name}</span>
         <span class="msg-count">${m.signal_count} 信号</span>`;
       mhead.onclick = () => {
         const list = wrap.querySelector(".sig-list");
-        list.style.display = list.style.display === "none" ? "" : "none";
+        const show = list.style.display === "none";
+        list.style.display = show ? "" : "none";
+        mhead.querySelector(".caret").textContent = show ? "▾" : "▸";
       };
       wrap.appendChild(mhead);
 
