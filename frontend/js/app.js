@@ -503,7 +503,8 @@ function makePlotOpts(p) {
   for (let i = 0; i < 10; i++) scales[i === 0 ? "y" : "y" + (i + 1)] = { auto: true };
   const axes = [
     // x 轴(下):只在最后一个非空窗口显示 → 视觉上共享一条时间轴
-    { show: isLast, stroke: "#8a93a3", grid: { stroke: "#242830", width: 1 },
+    // ⚠️ 必须显式 scale:"x",否则 uPlot 会按 side 猜测分配成 y scale(实测 y 轴错位)
+    { scale: "x", show: isLast, stroke: "#8a93a3", grid: { stroke: "#242830", width: 1 },
       ticks: { stroke: "#3a4150" }, font: "11px ui-monospace, Menlo",
       values: (u, vals) => vals.map(v => v.toFixed(2) + "s") },
     // 第 1 个信号:左 y 轴
