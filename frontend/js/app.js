@@ -438,20 +438,20 @@ function updatePlotData(p) {
   } else {
     p.uplot.setData(data);
   }
-  // 手动设置 y 范围:uPlot 1.6 的 range 回调只在 scale 无数据聚合时调用,
-  // series 有数据时走聚合路径(多窗口下算出错误范围)→ 这里显式计算覆盖
-  let lo = Infinity, hi = -Infinity;
+  // 每个信号独立 y 轴范围(CANoe 式):用该信号自身数据,同窗互不压扁
   sigs.forEach((s, i) => {
+    const key = i === 0 ? "y" : "y" + (i + 1);
+    let lo = Infinity, hi = -Infinity;
     for (const v of per[i + 1]) {
       if (v == null) continue;
       if (v < lo) lo = v;
       if (v > hi) hi = v;
     }
+    if (lo === Infinity) { lo = 0; hi = 1; }
+    else if (lo === hi) { lo -= 1; hi += 1; }          // 恒值信号(如全 0)扩开
+    else { const pad = (hi - lo) * 0.15; lo -= pad; hi += pad; }
+    p.uplot.setScale(key, { min: lo, max: hi });
   });
-  if (lo === Infinity) { lo = 0; hi = 1; }
-  else if (lo === hi) { lo -= 1; hi += 1; }       // 恒值信号(如全 0)扩开
-  else { const pad = (hi - lo) * 0.15; lo -= pad; hi += pad; }
-  p.uplot.setScale("y", { min: lo, max: hi });
   // 恢复时间同步范围
   if (state.xRange) p.uplot.setScale("x", state.xRange);
   // 刷新本示波器信号的已选列值
@@ -475,27 +475,42 @@ function broadcastX(u, min, max) {
 /* 单个示波器窗口的 uPlot 配置 */
 function makePlotOpts(p) {
   const sigs = p.sigs;
+  // 每个信号独立 y 轴(CANoe 式):第 1 个左轴,其余右轴(信号色刻度),同窗不互相压扁
+  const series = [{}, ...sigs.map((s, i) => ({
+    show: true, label: s.signal, stroke: () => s.color,
+    scale: i === 0 ? "y" : "y" + (i + 1),
+    auto: true, width: 2,
+    points: { show: () => false },
+  }))];
+  const scales = { x: { time: false } };
+  // 预创建 10 个 y 轴 scale(窗口信号数增减时 series 引用的 scale 始终存在)
+  for (let i = 0; i < 10; i++) scales[i === 0 ? "y" : "y" + (i + 1)] = { auto: true };
+  const axes = [
+    // x 轴(下):CANoe 式每个窗口底部都有刻度,时间同步后对齐
+    { show: true, stroke: "#8a93a3", grid: { stroke: "#242830", width: 1 },
+      ticks: { stroke: "#3a4150" }, font: "11px ui-monospace, Menlo",
+      values: (u, vals) => vals.map(v => v.toFixed(2) + "s") },
+    // 第 1 个信号:左 y 轴
+    { scale: "y", side: 0, stroke: "#8a93a3", grid: { stroke: "#242830", width: 1 },
+      ticks: { stroke: "#3a4150" }, font: "10px ui-monospace, Menlo", size: 46 },
+  ];
+  // 其余信号:独立右轴,刻度用信号色
+  sigs.slice(1).forEach((s, i) => {
+    const key = "y" + (i + 2);
+    scales[key] = { auto: true };
+    axes.push({
+      scale: key, side: 2, stroke: s.color,
+      grid: { show: false }, ticks: { stroke: s.color },
+      font: "10px ui-monospace, Menlo", size: 40,
+    });
+  });
   return {
     width: Math.max(200, p.canvasEl.clientWidth - 8),
     height: Math.max(100, p.canvasEl.clientHeight - 4),
     legend: { show: false },
-    series: [{}, ...sigs.map(s => ({
-      show: true, label: s.signal, stroke: () => s.color,
-      scale: "y", auto: true, width: 2,     // 曲线加粗,恒值线更明显
-      points: { show: () => false },
-    }))],
-    scales: {
-      x: { time: false },   // auto 由数据确定;缩放走 setScale + broadcastX
-      y: { auto: true },    // y 范围由 updatePlotData 显式 setScale(见上,绕过 uPlot 聚合 bug)
-    },
-    axes: [
-      // CANoe 式:每个窗口底部都有 x 轴刻度,时间同步后刻度对齐(视觉共享)
-      { show: true, stroke: "#8a93a3", grid: { stroke: "#242830", width: 1 },
-        ticks: { stroke: "#3a4150" }, font: "11px ui-monospace, Menlo",
-        values: (u, vals) => vals.map(v => v.toFixed(2) + "s") },
-      { stroke: "#8a93a3", grid: { stroke: "#242830", width: 1 },
-        ticks: { stroke: "#3a4150" }, font: "11px ui-monospace, Menlo", size: 58 },
-    ],
+    series,
+    scales,
+    axes,
     cursor: {
       x: true, y: true,
       stroke: "#7dd3fc", width: 1, dash: [4, 3],
