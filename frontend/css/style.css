@@ -181,6 +181,14 @@ body {
   font-size: 12px;
 }
 .trace-info { color: #5c6472; font-size: 12px; }
+.trace-input {
+  width: 110px;
+  background: #262a33; color: #c9ced6;
+  border: 1px solid #3a4150; border-radius: 4px;
+  padding: 4px 8px; font-size: 12px;
+}
+.trace-input:focus { outline: none; border-color: #4da3ff; }
+.trace-search-on { color: #5ad47a; font-weight: 600; }
 .trace-wrap { flex: 1; overflow: auto; }   /* x/y 都允许滚动,窄容器下表格不溢出挤压 */
 table.trace {
   width: 100%;

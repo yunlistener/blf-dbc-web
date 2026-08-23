@@ -440,7 +440,7 @@ async function loadFiles() {
   if (state.uplot) { state.uplot.destroy(); state.uplot = null; }
   document.getElementById("chart").innerHTML = "";
   document.getElementById("ro-signals").innerHTML = "";
-  state.trace = { frameId: null, channel: null, offset: 0, limit: 200 };
+  state.trace = { frameId: null, channel: null, offset: 0, limit: 200, search: null };
 
   state.stats = await api(`/api/blf/${state.blf}/stats`);
   state.t0 = state.stats.first_timestamp || 0;   // 绝对时间基准:曲线/读数/表格显示相对时间
@@ -634,6 +634,40 @@ function onTraceMsgChange() {
   state.trace.frameId = parseInt(fid, 10);
   state.trace.channel = parseInt(ch, 10);
   state.trace.offset = 0;
+  state.trace.search = null;
+  fillTraceSig();
+  document.getElementById("trace-sig-val").value = "";
+  document.getElementById("trace-clear").style.display = "none";
+  loadTrace();
+}
+
+/* 填充 Trace 搜索的信号下拉(当前报文的信号列表) */
+function fillTraceSig() {
+  const sel = document.getElementById("trace-sig");
+  const ch = state.channels.find(c => c.channel === state.trace.channel);
+  const msg = ch && ch.messages ? ch.messages.find(m => m.frame_id === state.trace.frameId) : null;
+  sel.innerHTML = '<option value="">— 信号 —</option>' + (msg ? msg.signals
+    .map(s => `<option value="${s}">${s}</option>`).join("") : "");
+}
+
+function doTraceSearch() {
+  const signal = document.getElementById("trace-sig").value;
+  const value = document.getElementById("trace-sig-val").value.trim();
+  if (!signal || !value) {
+    showTip("请选择信号并输入要搜索的值/状态名");
+    return;
+  }
+  state.trace.search = { signal, value };
+  state.trace.offset = 0;
+  document.getElementById("trace-clear").style.display = "";
+  loadTrace();
+}
+
+function clearTraceSearch() {
+  state.trace.search = null;
+  state.trace.offset = 0;
+  document.getElementById("trace-sig-val").value = "";
+  document.getElementById("trace-clear").style.display = "none";
   loadTrace();
 }
 
@@ -654,10 +688,19 @@ async function loadTrace() {
     body.innerHTML = `<tr><td colspan="5" class="hint">通道 ${ch} 未配置 DBC,请先在右侧配置中设置</td></tr>`;
     return;
   }
-  const r = await api(`/api/blf/${state.blf}/frames?dbc=${encodeURIComponent(dbc)}` +
-    `&frame_id=${fid}&channel=${ch}&limit=${state.trace.limit}&offset=${state.trace.offset}&decode=false`);
-  document.getElementById("trace-info").textContent =
-    `第 ${state.trace.offset + 1}-${state.trace.offset + r.returned} 帧`;
+  let url = `/api/blf/${state.blf}/frames?dbc=${encodeURIComponent(dbc)}` +
+    `&frame_id=${fid}&channel=${ch}&limit=${state.trace.limit}&offset=${state.trace.offset}&decode=false`;
+  if (state.trace.search) {
+    url += `&sig_filter=${encodeURIComponent(state.trace.search.signal)}` +
+           `&sig_value=${encodeURIComponent(state.trace.search.value)}`;
+  }
+  const r = await api(url);
+  const info = document.getElementById("trace-info");
+  if (state.trace.search) {
+    info.innerHTML = `<span class="trace-search-on">🔍 ${state.trace.search.signal}=${state.trace.search.value}</span> · 匹配 ${state.trace.offset + 1}-${state.trace.offset + r.returned} 帧`;
+  } else {
+    info.textContent = `第 ${state.trace.offset + 1}-${state.trace.offset + r.returned} 帧`;
+  }
   document.getElementById("trace-prev").disabled = state.trace.offset === 0;
   document.getElementById("trace-next").disabled = r.returned < state.trace.limit;
 
@@ -669,7 +712,7 @@ async function loadTrace() {
       <td class="t-data">${f.data}</td>`;
     body.appendChild(tr);
   }
-  if (!r.returned) body.innerHTML = `<tr><td colspan="5" class="hint">无数据</td></tr>`;
+  if (!r.returned) body.innerHTML = `<tr><td colspan="5" class="hint">${state.trace.search ? "无匹配帧" : "无数据"}</td></tr>`;
 }
 
 function tracePage(dir) {

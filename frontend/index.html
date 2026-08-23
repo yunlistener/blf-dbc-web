@@ -48,6 +48,10 @@
       <div id="panel-trace" class="panel">
         <div class="trace-toolbar">
           <select id="trace-msg" onchange="onTraceMsgChange()"></select>
+          <select id="trace-sig" onchange=""><option value="">— 信号 —</option></select>
+          <input id="trace-sig-val" class="trace-input" placeholder="值 / 状态名" onkeydown="if(event.key==='Enter')doTraceSearch()">
+          <button id="trace-search" class="btn" onclick="doTraceSearch()">搜索</button>
+          <button id="trace-clear" class="btn" onclick="clearTraceSearch()" style="display:none">清除</button>
           <button id="trace-prev" class="btn" onclick="tracePage(-1)">← 上一页</button>
           <button id="trace-next" class="btn" onclick="tracePage(1)">下一页 →</button>
           <span id="trace-info" class="trace-info"></span>
@@ -144,6 +148,6 @@
   <!-- 配置抽屉(嵌入主页面,点击右边缘展开/收起) -->
 
 <script src="vendor/uPlot.min.js"></script>
-<script src="js/app.js?v=12"></script>
+<script src="js/app.js?v=13"></script>
 </body>
 </html>

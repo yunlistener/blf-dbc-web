@@ -83,8 +83,10 @@ def get_frames(name: str, dbc: Optional[str] = None, frame_id: str = "",
                channel: Optional[int] = None,
                start: Optional[float] = None, end: Optional[float] = None,
                limit: int = 200, offset: int = 0,
-               decode: bool = False):
-    """Trace 帧列表:分页返回该报文的原始帧(时间戳/ID/DLC/数据/解码值)。"""
+               decode: bool = False,
+               sig_filter: Optional[str] = None,   # 按信号值搜索:信号名
+               sig_value: Optional[str] = None):    # 目标值(数值或值表状态名)
+    """Trace 帧列表:分页返回该报文的原始帧;支持按信号值过滤(sig_filter+sig_value)。"""
     if limit > 1000:
         raise HTTPException(422, "limit 最大 1000")
     blf_path = _blf_path(name)
@@ -100,6 +102,29 @@ def get_frames(name: str, dbc: Optional[str] = None, frame_id: str = "",
     if msg is None:
         raise HTTPException(404, f"DBC 中无报文 {hex(fid)}")
 
+    # 校验搜索信号存在于该报文
+    if sig_filter is not None:
+        if not any(s.name == sig_filter for s in msg.signals):
+            raise HTTPException(422, f"报文 {hex(fid)} 无信号 {sig_filter}")
+
+    def _sig_match(decoded) -> bool:
+        """按信号值过滤:数值按容差匹配,值表按状态名或原始值匹配。"""
+        if sig_filter is None or sig_value is None:
+            return True
+        v = decoded.get(sig_filter)
+        if v is None:
+            return False
+        if isinstance(v, dict) and "name" in v:
+            # 值表信号 {name, value}:匹配状态名或原始值
+            return v["name"] == sig_value or str(v["value"]) == sig_value
+        if isinstance(v, (int, float)):
+            try:
+                tv = float(sig_value)
+                return abs(v - tv) < 1e-6
+            except ValueError:
+                return False
+        return str(v) == sig_value
+
     frames = []
     skipped = 0
     for m in can.BLFReader(str(blf_path)):
@@ -111,6 +136,13 @@ def get_frames(name: str, dbc: Optional[str] = None, frame_id: str = "",
             continue
         if end is not None and m.timestamp > end:
             continue
+        if sig_filter is not None:
+            try:
+                dec = db.decode_message(fid, m.data)
+            except Exception:
+                continue
+            if not _sig_match(dec):
+                continue
         if skipped < offset:
             skipped += 1
             continue
@@ -133,7 +165,8 @@ def get_frames(name: str, dbc: Optional[str] = None, frame_id: str = "",
                 row["decoded"] = None
         frames.append(row)
     return {"name": msg.name, "channel": channel, "offset": offset,
-            "limit": limit, "returned": len(frames), "frames": frames}
+            "limit": limit, "returned": len(frames), "frames": frames,
+            "filter": {"signal": sig_filter, "value": sig_value}}
 
 
 @router.get("/{name}/export")
