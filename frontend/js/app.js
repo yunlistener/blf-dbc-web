@@ -424,8 +424,16 @@ function updatePlotData(p) {
     per[i + 1] = v;
   });
   const data = [x, ...sigs.map((_, i) => per[i + 1] || [])];
+  // ⚠️ 信号数变化 → 重建 uPlot:series 配置创建时固定,setData 不能动态加 series,
+  // 同窗信号增多时数据列数 > series 数,多余列不渲染(曲线消失的根因)
+  if (p.uplot && p.seriesCount !== sigs.length) {
+    p.uplot.destroy();
+    p.uplot = null;
+    p.canvasEl.innerHTML = "";
+  }
   if (!p.uplot) {
     p.uplot = new uPlot(makePlotOpts(p), data, p.canvasEl);
+    p.seriesCount = sigs.length;
     // 强制 canvas 物理尺寸 = 逻辑尺寸 × pxRatio(修正创建时 canvas 尺寸异常)
     const cv = p.canvasEl.querySelector("canvas");
     if (cv) {
