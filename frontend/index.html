@@ -178,7 +178,17 @@
   <!-- 光标 tooltip(示波器/已选信号 hover 时显示读数) -->
   <div id="cursor-tip" class="cursor-tip" style="display:none"></div>
 
+  <!-- 添加信号模态(示波器内 + 信号 按钮触发) -->
+  <div id="add-signal-modal" class="modal" style="display:none">
+    <div class="modal-box add-modal-box">
+      <div class="modal-title">向示波器 <b id="add-target"></b> 添加信号
+        <span class="modal-close" onclick="closeAddSignal()">×</span></div>
+      <input id="add-search" class="tree-search" placeholder="🔍 搜索 ID / 名称 / ECU / 信号…" oninput="renderAddSignalList(this.value)">
+      <div id="add-signal-list" class="add-signal-list"></div>
+    </div>
+  </div>
+
 <script src="vendor/uPlot.min.js"></script>
-<script src="js/app.js?v=73"></script>
+<script src="js/app.js?v=74"></script>
 </body>
 </html>

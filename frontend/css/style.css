@@ -446,6 +446,21 @@ td.t-data { color: #c9a86a; }
 }
 .modal-close { cursor: pointer; color: #8a93a3; font-size: 18px; padding: 0 4px; }
 .modal-close:hover { color: #fff; }
+
+/* 示波器添加信号模态 */
+.plot-add { margin-left: 6px; }
+.add-modal-box { width: 520px; max-width: 94vw; display: flex; flex-direction: column; }
+.add-signal-list { flex: 1; overflow-y: auto; max-height: 62vh; margin-top: 8px; }
+.add-msg { border-bottom: 1px solid #232730; }
+.add-msg-head {
+  padding: 6px 10px; cursor: pointer; color: #c9d2e0; font-size: 12px;
+  display: flex; align-items: center; gap: 6px; user-select: none;
+}
+.add-msg-head:hover { background: #23262e; }
+.add-msg-head .msg-id { color: #4da3ff; font-family: ui-monospace, Menlo, monospace; }
+.add-msg .dim { color: #5c6472; font-size: 10px; }
+.add-sig { padding: 4px 10px 4px 26px; cursor: pointer; color: #a8b1c0; font-size: 12px; }
+.add-sig:hover { background: #23262e; color: #e8ecf2; }
 .drop-zone {
   border: 1.5px dashed #3a4150; border-radius: 6px;
   padding: 28px 12px; text-align: center; color: #8a93a3;

@@ -414,9 +414,10 @@ function updatePlotData(p) {
   const sigs = p.sigs;
   // 标题:示波器号 + 色点 + 信号名
   p.title.innerHTML = `<span style="color:#4da3ff;font-weight:600">示波器 ${p.id}</span>` +
+    `<button class="btn-mini plot-add" onclick="openAddSignal(${p.id})" title="向此示波器添加信号">+ 信号</button>` +
     (sigs.length
       ? sigs.map(s => `<span class="pt-dot" style="background:${s.color}"></span><span>${s.signal}${s.unit ? " (" + s.unit + ")" : ""}</span>`).join("")
-      : `<span style="color:#5c6472">(空)在左侧已选信号中分配信号,或点 [+]</span>`);
+      : `<span style="color:#5c6472">(空)点 [ + 信号 ] 添加,或点 [+] 增空示波器</span>`);
   // 空示波器:不创建 uPlot
   if (!sigs.length) {
     if (p.uplot) { p.uplot.destroy(); p.uplot = null; }
@@ -513,27 +514,6 @@ function broadcastX(u, min, max) {
   syncingX = false;
 }
 
-/* 值表信号的阶梯线路径(step-after):值保持到下一个采样点,离散状态清晰 */
-function stepPath(u, seriesIdx, idx0, idx1) {
-  const xData = u.data[0];
-  const yData = u.data[seriesIdx];
-  const path = new Path2D();
-  let px = null, py = null, started = false;
-  for (let i = idx0; i <= idx1; i++) {
-    const y = yData[i];
-    if (y == null) { started = false; continue; }
-    const cx = u.valToPos(xData[i], "x", true);
-    const cy = u.valToPos(y, "y", true);
-    if (!started) { path.moveTo(cx, cy); started = true; }
-    else {
-      path.lineTo(cx, py);   // 水平段:保持上一个值
-      path.lineTo(cx, cy);   // 垂直段:跳转到新值
-    }
-    px = cx; py = cy;
-  }
-  return path;
-}
-
 /* 单个示波器窗口的 uPlot 配置 */
 function makePlotOpts(p) {
   const sigs = p.sigs;
@@ -545,10 +525,10 @@ function makePlotOpts(p) {
       points: { show: () => false },
     };
     if (s.choices) {
-      // 值表信号:阶梯线 + 采样点标记(离散状态、稀疏采样清晰可见,不误导为连续变化)
-      conf.paths = stepPath;
+      // 值表信号:内置阶梯折线(离散状态保持到下一采样点),不显示散点
+      conf.paths = uPlot.paths.stepped({ align: 1 });
       conf.width = 1.5;
-      conf.points = { show: true, size: 4 };
+      conf.points = { show: () => false };
     }
     return conf;
   })];
@@ -929,10 +909,8 @@ async function loadDbcTree() {
       for (const s of m.signals) {
         const item = document.createElement("div");
         item.className = "sig-item";
-        item.innerHTML = `<span class="sig-dot"></span>
-          <span class="sig-name">${s}</span>
-          <span class="sig-unit">${m.frame_id_hex}</span>`;
-        item.onclick = () => toggleSignal(m, s, item, ch.channel);
+        item.innerHTML = `<span class="sig-dot"></span> <span class="sig-name">${s}</span> <span class="sig-unit">${m.frame_id_hex}</span>`;
+        // 信号树仅浏览/搜索,选择在示波器内进行(+ 信号按钮)
         item.dataset.sig = s;
         item.dataset.ch = String(ch.channel);
         list.appendChild(item);
@@ -1065,35 +1043,29 @@ function sortTree() {
   filterTree(document.getElementById("tree-search").value);
 }
 
-async function toggleSignal(msg, signal, item, channel) {
+/* 核心:添加信号到指定示波器(plotId 为 null 时自动复用空示波器) */
+async function addSignal(msg, signal, channel, plotId) {
   const existing = state.signals.find(s => s.signal === signal && s.frame_id === msg.frame_id && s.channel === channel);
   if (existing) {
-    state.signals = state.signals.filter(s => s !== existing);
-    item.classList.remove("active");
-    saveSelectedSignals();
-    draw();   // syncPlots 自动销毁空示波器
-    return;
+    showTip(`信号已在示波器 ${existing.plotId}`);
+    return false;
   }
   if (state.signals.length >= MAX_SERIES) {
     showTip(`最多同时显示 ${MAX_SERIES} 个信号`);
-    return;
+    return false;
   }
-  item.classList.add("active");
   const used = new Set(state.signals.map(s => s.color));
   const color = PALETTE.find(c => !used.has(c)) || PALETTE[state.signals.length % PALETTE.length];
 
   const ch = state.channels.find(c => c.channel === channel);
   const dbc = ch && ch.dbc;
   if (!dbc) {
-    item.classList.remove("active");
     showTip(`通道 ${channel} 未配置 DBC,请在右侧配置中为该通道选择 DBC 文件`);
-    return;
+    return false;
   }
-  // 日志中无此报文 → 快速提示,不进入加载(避免卡在选中态)
   if (state.hasData && !state.hasData.has(msg.frame_id)) {
-    item.classList.remove("active");
     showTip(`报文 ${msg.frame_id_hex} 在日志中无数据(该通道未发送),无法画曲线`);
-    return;
+    return false;
   }
 
   let detail, data;
@@ -1102,41 +1074,108 @@ async function toggleSignal(msg, signal, item, channel) {
     data = await api(`/api/blf/${state.blf}/decode?dbc=${encodeURIComponent(dbc)}` +
       `&frame_id=${msg.frame_id_hex}&signal=${encodeURIComponent(signal)}&channel=${channel}&max_points=200000`);
   } catch (e) {
-    item.classList.remove("active");   // 失败回滚选中态,可再次点击
     showTip(`加载失败: ${e.message}`);
-    return;
+    return false;
   }
   if (!data.times || !data.times.length) {
-    item.classList.remove("active");
     showTip(`报文 ${msg.frame_id_hex} 在日志中无数据(该通道未发送),无法画曲线`);
-    return;
+    return false;
   }
   const sigDef = detail.signals.find(s => s.name === signal);
   const unit = sigDef?.unit || "";
-  // 值表信号:保存 choices 映射 {raw值: {name, value}},读数时显示名称
-  const choices = sigDef?.choices || null;
-  const comment = sigDef?.comment || "";        // 信号说明文字
-  const senders = detail.senders || [];          // 发送 ECU
+  const choices = sigDef?.choices || null;    // 值表信号:读数显示名称
+  const comment = sigDef?.comment || "";      // 信号说明文字
+  const senders = detail.senders || [];       // 发送 ECU
 
-  // 绝对时间戳 → 相对时间(以日志起始为 0)
-  data.times = data.times.map(t => t - state.t0);
-  // 槽位分配须与 push 同步完成(避免并发请求拿到相同槽位)
+  data.times = data.times.map(t => t - state.t0);   // 绝对 → 相对时间
   const usedSlots = new Set(state.signals.map(s => s.slot));
   const slot = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
                 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
                 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
                 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58,
                 59, 60, 61, 62, 63, 64].find(i => !usedSlots.has(i));
-  // 分配示波器:优先复用空示波器,无空才新建
-  const usedPlotIds = new Set(state.signals.map(s => s.plotId));
-  const emptyPlot = state.plotIds.find(id => !usedPlotIds.has(id));
-  const pid = emptyPlot != null ? emptyPlot : state.plotSeq++;
-  if (emptyPlot == null) state.plotIds.push(pid);
+  // 指定示波器;未指定则复用空示波器,无空才新建
+  let pid = plotId;
+  if (pid == null) {
+    const usedPlotIds = new Set(state.signals.map(s => s.plotId));
+    const emptyPlot = state.plotIds.find(id => !usedPlotIds.has(id));
+    pid = emptyPlot != null ? emptyPlot : state.plotSeq++;
+    if (emptyPlot == null) state.plotIds.push(pid);
+  }
   state.signals.push({ frame_id: msg.frame_id, signal, unit, color, slot, data, channel, dbc, choices, comment, senders, plotId: pid });
-  saveSelectedSignals();   // 持久化:刷新后恢复
+  saveSelectedSignals();
   draw();
-  // 信号统计 tab 已打开时,新选信号要刷新统计
   if (currentTab() === "sigstats") loadSigStats();
+  return true;
+}
+
+/* 向指定示波器添加信号(示波器内入口调用) */
+async function addSignalToPlot(plotId, msg, signal, channel) {
+  const ok = await addSignal(msg, signal, channel, plotId);
+  if (ok) closeAddSignal();
+}
+
+/* 示波器内添加信号:模态选择器 */
+let addingPlot = null;
+function openAddSignal(plotId) {
+  addingPlot = plotId;
+  document.getElementById("add-target").textContent = plotId;
+  document.getElementById("add-search").value = "";
+  document.getElementById("add-signal-modal").style.display = "";
+  renderAddSignalList("");
+}
+function closeAddSignal() {
+  addingPlot = null;
+  document.getElementById("add-signal-modal").style.display = "none";
+}
+function renderAddSignalList(q) {
+  const box = document.getElementById("add-signal-list");
+  box.innerHTML = "";
+  const ql = (q || "").toLowerCase();
+  for (const ch of state.channels) {
+    for (const m of (ch.messages || [])) {
+      const sigs = m.signals || [];
+      const match = !ql ||
+        String(m.frame_id_hex).toLowerCase().includes(ql) ||
+        (m.name || "").toLowerCase().includes(ql) ||
+        (m.senders || []).some(e => e.toLowerCase().includes(ql)) ||
+        sigs.some(s => s.toLowerCase().includes(ql));
+      if (!match) continue;
+      const mdiv = document.createElement("div");
+      mdiv.className = "add-msg";
+      const mhead = document.createElement("div");
+      mhead.className = "add-msg-head";
+      mhead.innerHTML = `<span class="caret">▾</span><span class="msg-id">${m.frame_id_hex}</span> ${m.name} <span class="dim">CH${ch.channel}</span>`;
+      mhead.onclick = () => {
+        mdiv.querySelectorAll(".add-sig").forEach(x => x.style.display = x.style.display === "none" ? "" : "none");
+      };
+      mdiv.appendChild(mhead);
+      for (const s of sigs) {
+        const sdiv = document.createElement("div");
+        sdiv.className = "add-sig";
+        sdiv.innerHTML = `<span class="sig-name">${s}</span>`;
+        sdiv.onclick = () => addSignalToPlot(addingPlot, m, s, ch.channel);
+        mdiv.appendChild(sdiv);
+      }
+      box.appendChild(mdiv);
+    }
+  }
+  if (!box.children.length) box.innerHTML = `<div class="hint">无匹配信号</div>`;
+}
+
+/* 信号树点击切换(保留给恢复流程使用) */
+async function toggleSignal(msg, signal, item, channel) {
+  const existing = state.signals.find(s => s.signal === signal && s.frame_id === msg.frame_id && s.channel === channel);
+  if (existing) {
+    state.signals = state.signals.filter(s => s !== existing);
+    if (item) item.classList.remove("active");
+    saveSelectedSignals();
+    draw();
+    return;
+  }
+  if (item) item.classList.add("active");
+  const ok = await addSignal(msg, signal, channel, null);
+  if (!ok && item) item.classList.remove("active");
 }
 
 /* ---------- 导出 ---------- */
