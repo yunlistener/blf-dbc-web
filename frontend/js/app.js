@@ -582,10 +582,11 @@ async function toggleConfigDrawer() {
 
 function resizeChart() {
   if (!state.plots.length) return;
+  const wrap = document.getElementById("plot-wrap");
+  const w = Math.max(200, wrap.clientWidth - 8);       // 上下排列:窗口横贯全宽
   state.plots.forEach(p => {
     if (!p.uplot) return;
-    const w = Math.max(200, p.el.clientWidth - 8);       // 横向平铺:每窗口自己的宽度
-    const h = Math.max(80, p.el.clientHeight - 26);      // 减标题高度
+    const h = Math.max(80, p.el.clientHeight - 26);    // 减标题高度
     p.uplot.setSize({ width: w, height: h });
     // 高 DPI 修正:setSize 后手动同步 canvas 物理尺寸
     const cv = p.canvasEl.querySelector("canvas");
