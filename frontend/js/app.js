@@ -359,7 +359,7 @@ function draw() {
   showPlaybar(state.signals.length > 0);   // 有信号才显示播放控制栏
   renderSigSidebar();   // 左侧已选信号列(含示波器分配下拉)
   if (!state.signals.length) {
-    state.plots.forEach(p => { if (p.chart) p.chart.remove(); p.el.remove(); });
+    state.plots.forEach(p => { if (p.chart) p.chart.destroy(); p.el.remove(); });
     state.plots = [];
     hideCursorTip();
     return;
@@ -378,7 +378,7 @@ function syncPlots() {
   const keep = new Set(ids);
   // 销毁消失的示波器
   state.plots = state.plots.filter(p => {
-    if (!keep.has(p.id)) { if (p.chart) p.chart.remove(); p.el.remove(); return false; }
+    if (!keep.has(p.id)) { if (p.chart) p.chart.destroy(); p.el.remove(); return false; }
     return true;
   });
   // 创建缺失的示波器容器
@@ -898,7 +898,7 @@ async function loadFiles() {
 
   // 重置分析状态(文件可能已切换)
   state.signals = [];
-  state.plots.forEach(p => { if (p.chart) p.chart.remove(); });
+  state.plots.forEach(p => { if (p.chart) p.chart.destroy(); });
   state.plots = [];
   state.plotIds = [];
   state.plotSeq = 1;
