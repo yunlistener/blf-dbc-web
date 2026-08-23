@@ -399,7 +399,7 @@ function createLwcChart(p) {
   const chart = LightweightCharts.createChart(holder, {
     width: Math.max(200, el.clientWidth - 8),
     height: Math.max(100, el.clientHeight - 4),
-    layout: { background: { color: "transparent" }, textColor: "#8a93a3", fontFamily: "ui-monospace, Menlo, monospace", fontSize: 11 },
+    layout: { background: { color: "transparent" }, textColor: "#8a93a3", fontFamily: "ui-monospace, Menlo, monospace", fontSize: 11, attributionLogo: false },
     grid: { vertLines: { color: "#242830" }, horzLines: { color: "#242830" } },
     rightPriceScale: { visible: false },
     leftPriceScale: { visible: true, borderColor: "#3a4150" },
@@ -412,6 +412,8 @@ function createLwcChart(p) {
   });
   p.chart = chart;
   p.series = {};    // slot → LineSeries
+  // 光标事件:chart 级订阅(crosshairMove 是 chart 的方法,不是 series 的)
+  chart.subscribeCrosshairMove(param => onCrosshair(p, param));
   // 缩放同步 + 最小窗口限制
   chart.timeScale().subscribeVisibleRangeChange(range => {
     if (!range || syncingX || clamping) return;
@@ -493,7 +495,6 @@ function updateSeriesData(p) {
         priceLineVisible: false,
         lastValueVisible: false,
       });
-      ser.subscribeCrosshairMove(param => onCrosshair(p, param));
       p.series[s.slot] = ser;
     }
     const n = s.data.times.length;
