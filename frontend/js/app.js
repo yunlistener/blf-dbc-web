@@ -29,7 +29,6 @@ const state = {
   lastCursorT: null, // 最后光标时刻(相对秒,信号行 tooltip 显示用)
   jitterMarks: [],   // [{t, color}] 抖动峰值时间点(相对秒),示波器 x 轴标记
   anchorT: null,     // 测量锚点时间(相对秒);点击设置,再点清除
-  playYRange: null,  // 播放时固定 y 轴范围 {min, max}(防数据增长重算导致曲线跳动)
 };
 
 function showTip(msg) { document.getElementById("st-tip").textContent = msg; }
@@ -414,7 +413,7 @@ function createLwcChart(p) {
     localization: { timeFormatter: t => (t / 1000).toFixed(3) + "s" },   // crosshair 时间标签
   });
   p.chart = chart;
-  p.series = {};    // slot → LineSeries
+  p.series = {};    // slot → {ser: 真实series, sk: 隐藏骨架series}
   // 光标事件:chart 级订阅(crosshairMove 是 chart 的方法,不是 series 的)
   chart.subscribeCrosshairMove(param => onCrosshair(p, param));
   // 缩放同步 + 最小窗口限制
@@ -482,17 +481,18 @@ function renderOverlays() {
   });
 }
 
-/* 单窗口数据与 series 同步(信号增删/数据更新) */
+/* 单窗口数据与 series 同步(信号增删/数据更新)。返回是否有数据变化 */
 function updateSeriesData(p) {
   const sigs = p.sigs;
+  let changed = false;
   const kept = new Set(sigs.map(s => s.slot));
   for (const slot in p.series) {
-    if (!kept.has(Number(slot))) { p.chart.removeSeries(p.series[slot]); delete p.series[slot]; }
+    if (!kept.has(Number(slot))) { p.chart.removeSeries(p.series[slot]); delete p.series[slot]; changed = true; }
   }
   sigs.forEach(s => {
-    let ser = p.series[s.slot];
-    if (!ser) {
-      ser = p.chart.addSeries(LightweightCharts.LineSeries, {
+    let entry = p.series[s.slot];
+    if (!entry) {
+      const ser = p.chart.addLineSeries({
         color: s.color,
         lineWidth: s.choices ? 1 : 2,
         priceScaleId: "left",                  // 同窗共享 y 轴(LWC 自动聚合范围)
@@ -500,8 +500,30 @@ function updateSeriesData(p) {
         priceLineVisible: false,
         lastValueVisible: false,
       });
-      p.series[s.slot] = ser;
+      // 隐藏骨架 series = 全量数据副本:撑开 timeScale 全量时间轴 + priceScale 全量 y 范围
+      // ⚠️ 必须 visible(transparent 色):visible:false 的 series 不参与 timeScale 范围计算,
+      // 导致 setVisibleRange 锁数据末尾(实测)
+      const sk = p.chart.addLineSeries({
+        visible: true, color: "transparent", lineWidth: 1, priceScaleId: "left",
+        priceLineVisible: false, lastValueVisible: false,
+      });
+      entry = { ser, sk };
+      p.series[s.slot] = entry;
+      changed = true;
+      // 骨架数据:全量 staticData(一次)
+      if (s.staticData && s.staticData.times.length) {
+        const skd = [];
+        const t = s.staticData.times, v = s.staticData.values;
+        for (let i = 0; i < t.length; i++) {
+          const raw = v[i];
+          const val = (raw != null && typeof raw === "object" && "value" in raw) ? raw.value : raw;
+          if (val == null) continue;
+          skd.push({ time: Math.round(t[i] * 1000), value: val });
+        }
+        sk.setData(skd);
+      }
     }
+    let ser = entry.ser;
     const n = s.data.times.length;
     if (s._dlen === n && s._dplot === p.id) return;   // 数据未变跳过
     s._dlen = n; s._dplot = p.id;
@@ -514,7 +536,9 @@ function updateSeriesData(p) {
       data.push({ time: Math.round(t[i] * 1000), value: val });   // 相对秒 → 整数毫秒
     }
     ser.setData(data);
+    changed = true;
   });
+  return changed;
 }
 
 /* 单个示波器的数据与实例(LWC 版) */
@@ -533,21 +557,35 @@ function updatePlotData(p) {
     return;
   }
   if (!p.chart) createLwcChart(p);
-  updateSeriesData(p);
-  // 播放中:y 轴固定全量范围(本地 staticData 聚合,防每帧 setData 重算导致曲线跳动)
-  if (playState.playing || state.playYRange) {
-    const ps = p.chart.priceScale("left");
-    ps.applyOptions({ autoScale: false });
-    if (state.playYRange) ps.setVisibleRange(state.playYRange);   // LWC 5.x 官方 API
-  }
-  // x 范围:固定范围(state.xRange/全量)或自适应
-  const dur = state.stats && state.stats.duration ? state.stats.duration * 1000 : 0;
-  if (state.xRange) {
-    p.chart.timeScale().setVisibleRange({ from: state.xRange.min * 1000, to: state.xRange.max * 1000 });
-  } else if (dur > 0) {
-    p.chart.timeScale().setVisibleRange({ from: 0, to: dur });
+  if (window.__PX2) window.__PXLOG.push("UPD");
+  const dataChanged = updateSeriesData(p);
+  if (window.__PX2) window.__PXLOG.push("CHG=" + dataChanged);
+  // y 轴:隐藏骨架(全量数据副本)参与聚合 → 播放中 y 范围自动固定全量,不跳动。
+  // x 范围:骨架撑开全量时间轴 → setVisibleRange。
+  // ⚠️ LWC 4.2 setData 后会把可见范围滚动到数据末尾,同步 setVisibleRange 无效,
+  // 必须延迟一帧(rAF)再设置(实测:同步 4511~4610 锁末尾,rAF 后 0~4610 全量)
+  const applyXRange = () => {
+    if (!p.chart) return;
+    const dur = state.stats && state.stats.duration_s ? state.stats.duration_s * 1000 : 0;
+    if (state.xRange) {
+      p.chart.timeScale().setVisibleRange({ from: state.xRange.min * 1000, to: state.xRange.max * 1000 });
+    } else if (playState.dur > 0) {
+      p.chart.timeScale().setVisibleRange({ from: 0, to: playState.dur * 1000 });
+    } else if (dur > 0) {
+      p.chart.timeScale().setVisibleRange({ from: 0, to: dur });
+    } else {
+      p.chart.timeScale().fitContent();
+    }
+    if (window.__PX) {
+      const r2 = p.chart.timeScale().getVisibleRange();
+      window.__PXLOG.push(`set=${JSON.stringify(arguments[0] && arguments[0].from)}~${arguments[0] && arguments[0].to} now=${r2 ? r2.from + "~" + r2.to : "null"}`);
+    }
+    if (window.__PX2) window.__PXLOG.push(`X2set now=${(function(){try{var r=p.chart.timeScale().getVisibleRange();return r?r.from+"~"+r.to:"null"}catch(e){return "ERR "+e.message}})()}`);
+  };
+  if (dataChanged) {
+    setTimeout(applyXRange, 60);   // 延迟 60ms 等 LWC setData 内部重算完成(实测 0ms 无效)
   } else {
-    p.chart.timeScale().fitContent();
+    applyXRange();
   }
   renderOverlays();
 }
@@ -564,7 +602,8 @@ function onCrosshair(p, param) {
       (dt !== 0 ? ` (${(1 / Math.abs(dt)).toFixed(2)} Hz)` : "") + `</div>`);
   }
   p.sigs.forEach(s => {
-    const ser = p.series[s.slot];
+    const ent = p.series[s.slot];
+    const ser = ent ? ent.ser : null;
     let val = null;
     if (param.seriesData && ser) {
       const v = param.seriesData.get(ser);
@@ -582,7 +621,8 @@ function onCrosshair(p, param) {
   // 其他窗口竖线跟随(time 决定位置,horzLine 不可见)
   state.plots.forEach(pp => {
     if (pp.chart && pp.chart !== p.chart) {
-      const firstSer = pp.series[Object.keys(pp.series)[0]];
+      const firstEnt = pp.series[Object.keys(pp.series)[0]];
+      const firstSer = firstEnt ? firstEnt.ser : null;
       if (firstSer) pp.chart.setCrosshairPosition(0, param.time, firstSer);
     }
   });
@@ -1571,31 +1611,6 @@ function resetPlayData() {
   state.signals.forEach(s => { s.data = { times: [], values: [] }; });
 }
 
-/* 播放开始时聚合各信号全量 min/max(本地 staticData,免 API),固定 y 轴防跳动 */
-async function loadPlayYRange() {
-  let lo = Infinity, hi = -Infinity;
-  for (const s of state.signals) {
-    if (!s.staticData) continue;
-    for (const v of s.staticData.values) {
-      const val = (v != null && typeof v === "object" && "value" in v) ? v.value : v;
-      if (val == null) continue;
-      if (val < lo) lo = val;
-      if (val > hi) hi = val;
-    }
-  }
-  if (lo === Infinity) return;
-  if (lo === hi) state.playYRange = { min: lo - 1, max: hi + 1 };
-  else { const pad = (hi - lo) * 0.15; state.playYRange = { min: lo - pad, max: hi + pad }; }
-}
-
-/* 播放结束/停止:恢复 y 轴自动缩放 */
-function releasePlayYRange() {
-  state.playYRange = null;
-  state.plots.forEach(p => {
-    if (p.chart) p.chart.priceScale("left").applyOptions({ autoScale: true });
-  });
-}
-
 /* 开始/继续播放:清空累积 → 配置订阅 → 播放 */
 function startPlayback() {
   if (!state.signals.length) { showTip("请先添加信号"); return; }
@@ -1603,7 +1618,6 @@ function startPlayback() {
   cancelAnimationFrame(playRaf);
   playState.renderPending = false;
   state.xRange = null;   // 播放开始时 x 范围由首批数据/state 决定,之后固定
-  loadPlayYRange();      // 后台加载全量 y 范围(播放中固定防跳动)
   if (!playState.ws || playState.ws.readyState !== 1) connectReplay();
   resetPlayData();
   draw();   // 清空曲线
@@ -1626,7 +1640,6 @@ function stopPlayback() {
   state.xRange = null;
   cancelAnimationFrame(playRaf);
   playState.renderPending = false;
-  releasePlayYRange();      // 恢复 y 轴自动缩放
   restoreStaticData();      // 停止 → 恢复静态全量曲线
   draw();
   updatePlayUI();
@@ -1670,8 +1683,7 @@ function onReplayMsg(m) {
     state.xRange = null;      // 结束 → 恢复自动 x 范围
     cancelAnimationFrame(playRaf);
     playState.renderPending = false;
-    releasePlayYRange();      // 恢复 y 轴自动缩放
-    restoreStaticData();      // 播放数据覆盖 → 恢复静态全量
+      restoreStaticData();      // 播放数据覆盖 → 恢复静态全量
     draw();   // 最终渲染全量
     updatePlayUI();
     showTip("回放结束");
@@ -1737,7 +1749,6 @@ function pausePlayOnSignalChange() {
     playState.playing = false;
     cancelAnimationFrame(playRaf);
     playState.renderPending = false;
-    releasePlayYRange();
     restoreStaticData();
     updatePlayUI();
   }
@@ -1746,3 +1757,32 @@ function pausePlayOnSignalChange() {
 init().catch(e => {
   document.getElementById("tree-hint").textContent = "加载失败: " + e.message;
 });
+// TEMP-V
+setTimeout(() => {
+  const s0 = state.signals[0];
+  if (!s0 || !s0.staticData) { document.title = "V no signals"; return; }
+  const n = Math.floor(s0.staticData.times.length * 0.2);
+  playState.dur = 46.1;
+  playState.playing = true;
+  const key = `${s0.frame_id}|${s0.channel}|${s0.signal}`;
+  playState.data[key] = {
+    times: s0.staticData.times.slice(0, n),
+    values: s0.staticData.values.slice(0, n),
+  };
+  window.__PX = true;
+  window.__PX2 = true;
+  window.__PXLOG = [];
+  applyPlayData();
+  setTimeout(() => {
+    const p0 = state.plots[0];
+    const vr = p0.chart.timeScale().getVisibleRange();
+    const cv = p0.holder.querySelector("canvas");
+    let px = 0;
+    if (cv && cv.width > 0) {
+      const d = cv.getContext("2d").getImageData(0, 0, cv.width, cv.height).data;
+      for (let i = 0; i < d.length; i += 4) if (d[i] + d[i+1] + d[i+2] > 120) px++;
+    }
+    document.title = `V px=${px} vr=${vr ? vr.from + "~" + vr.to : "null"} n=${n} LOG=${(window.__PXLOG || []).slice(-4).join("|")}`;
+  }, 900);
+}, 3000);
+
