@@ -22,10 +22,6 @@
   </div>
 
   <div id="body">
-    <!-- 左侧把手:点击展开/收起信号树 -->
-    <div class="drawer-handle left" id="sidebar-handle" onclick="toggleSidebar()" title="报文/信号树">
-      <span class="handle-icon">▤</span><span class="handle-text">信号</span>
-    </div>
     <!-- 左侧:报文/信号树 -->
     <aside id="sidebar">
       <div class="panel-title">报文 / 信号</div>
@@ -76,7 +72,10 @@
       </div>
     </main>
 
-    <!-- 配置:常驻边缘把手 + 抽屉(与主区域同层,展开时挤压主区域) -->
+    <!-- 右侧把手(常驻):信号树 + 配置抽屉,点击展开/收回 -->
+    <div class="drawer-handle" id="sidebar-handle" onclick="toggleSidebar()" title="报文/信号树">
+      <span class="handle-icon">▤</span><span class="handle-text">信号</span>
+    </div>
     <div class="drawer-handle" id="cfg-handle" onclick="toggleConfigDrawer()" title="工程配置">
       <span class="handle-icon">⚙</span><span class="handle-text">配置</span>
     </div>
@@ -152,6 +151,6 @@
   <!-- 配置抽屉(嵌入主页面,点击右边缘展开/收起) -->
 
 <script src="vendor/uPlot.min.js"></script>
-<script src="js/app.js?v=14"></script>
+<script src="js/app.js?v=15"></script>
 </body>
 </html>
