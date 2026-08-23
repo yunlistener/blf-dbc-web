@@ -1128,7 +1128,8 @@ async function addSignal(msg, signal, channel, plotId) {
                 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
                 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58,
                 59, 60, 61, 62, 63, 64].find(i => !usedSlots.has(i));
-  state.signals.push({ frame_id: msg.frame_id, signal, unit, color, slot, data, channel, dbc, choices, comment, senders, plotId: pid });
+  state.signals.push({ frame_id: msg.frame_id, signal, unit, color, slot, data, channel, dbc, choices, comment, senders, plotId: pid,
+    staticData: { times: data.times.slice(), values: data.values.slice() } });   // 静态全量副本:播放结束/停止时恢复,防止播放残留数据覆盖
   saveSelectedSignals();
   draw();
   if (currentTab() === "sigstats") loadSigStats();
@@ -1622,6 +1623,13 @@ function sendReplay(msg) {
 }
 
 /* 重置播放累积(清空曲线数据) */
+/* 播放结束后恢复静态全量数据(播放数据只是临时覆盖,防止残留稀疏数据) */
+function restoreStaticData() {
+  for (const s of state.signals) {
+    if (s.staticData) s.data = { times: s.staticData.times.slice(), values: s.staticData.values.slice() };
+  }
+}
+
 function resetPlayData() {
   playState.data = {};
   state.signals.forEach(s => { s.data = { times: [], values: [] }; });
@@ -1656,7 +1664,7 @@ function stopPlayback() {
   state.xRange = null;
   cancelAnimationFrame(playRaf);
   playState.renderPending = false;
-  resetPlayData();
+  restoreStaticData();      // 停止 → 恢复静态全量曲线
   draw();
   updatePlayUI();
 }
@@ -1699,7 +1707,8 @@ function onReplayMsg(m) {
     state.xRange = null;      // 结束 → 恢复自动 x 范围
     cancelAnimationFrame(playRaf);
     playState.renderPending = false;
-    applyPlayData();   // 最终渲染全量
+    restoreStaticData();      // 播放数据覆盖 → 恢复静态全量
+    draw();   // 最终渲染全量
     updatePlayUI();
     showTip("回放结束");
   }
@@ -1757,11 +1766,14 @@ function updateProgressUI() {
   if (dEl && playState.dur > 0) dEl.textContent = playState.dur.toFixed(1) + "s";
 }
 
-/* 播放中信号集变化 → 自动暂停(避免数据不同步) */
+/* 播放中信号集变化 → 自动暂停(避免数据不同步),并恢复静态全量 */
 function pausePlayOnSignalChange() {
   if (playState.playing) {
     sendReplay({ type: "pause" });
     playState.playing = false;
+    cancelAnimationFrame(playRaf);
+    playState.renderPending = false;
+    restoreStaticData();
     updatePlayUI();
   }
 }
