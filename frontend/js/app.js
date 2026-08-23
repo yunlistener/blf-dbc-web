@@ -452,8 +452,21 @@ function updatePlotData(p) {
     else { const pad = (hi - lo) * 0.15; lo -= pad; hi += pad; }
     p.uplot.setScale(key, { min: lo, max: hi });
   });
-  // 恢复时间同步范围
-  if (state.xRange) p.uplot.setScale("x", state.xRange);
+  // 显式设置 x 范围:uPlot 对后创建的窗口 x scale 不自动计算(实测 undefined),
+  // 导致 x 轴 _show=false 不绘制 → 这里手动算(数据范围或同步范围)
+  const xData = p.uplot.data[0];
+  if (state.xRange) {
+    p.uplot.setScale("x", state.xRange);
+  } else if (xData && xData.length) {
+    p.uplot.setScale("x", { min: xData[0], max: xData[xData.length - 1] });
+  }
+  // x 轴显示:只有最后一个非空窗口(动态更新,窗口增减/信号移动时生效)
+  const maxNonEmpty = Math.max(-1, ...state.plots.filter(x => x.sigs && x.sigs.length).map(x => x.id));
+  const xAxis = p.uplot.axes[0];
+  if (xAxis && xAxis.show !== (p.id === maxNonEmpty)) {
+    xAxis.show = p.id === maxNonEmpty;
+    p.uplot.redraw();
+  }
   // 刷新本示波器信号的已选列值
   const b = p.uplot.bbox;
   const pxr = uPlot.pxRatio || 1;
@@ -494,19 +507,19 @@ function makePlotOpts(p) {
       ticks: { stroke: "#3a4150" }, font: "11px ui-monospace, Menlo",
       values: (u, vals) => vals.map(v => v.toFixed(2) + "s") },
     // 第 1 个信号:左 y 轴
-    { scale: "y", side: 0, stroke: "#8a93a3", grid: { stroke: "#242830", width: 1 },
+    { scale: "y", side: 0, show: true, stroke: "#8a93a3", grid: { stroke: "#242830", width: 1 },
       ticks: { stroke: "#3a4150" }, font: "10px ui-monospace, Menlo", size: 46 },
   ];
-  // 其余信号:独立右轴,刻度用信号色
-  sigs.slice(1).forEach((s, i) => {
-    const key = "y" + (i + 2);
-    scales[key] = { auto: true };
-    axes.push({
-      scale: key, side: 2, stroke: s.color,
-      grid: { show: false }, ticks: { stroke: s.color },
-      font: "10px ui-monospace, Menlo", size: 40,
-    });
-  });
+  // 其余信号:独立右轴(信号色刻度);未使用的 y 轴显式隐藏,防止 uPlot 自动生成多余轴
+  for (let i = 1; i < 10; i++) {
+    const key = "y" + (i + 1);
+    const s = sigs[i];
+    axes.push(s
+      ? { scale: key, side: 2, show: true, stroke: s.color,
+          grid: { show: false }, ticks: { stroke: s.color },
+          font: "10px ui-monospace, Menlo", size: 40 }
+      : { scale: key, side: 2, show: false });
+  }
   return {
     width: Math.max(200, p.canvasEl.clientWidth - 8),
     height: Math.max(100, p.canvasEl.clientHeight - 4),
