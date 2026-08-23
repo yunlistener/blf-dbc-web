@@ -246,6 +246,7 @@ function renderSigSidebar() {
       <span class="sig-sidebar-actions">
         <button class="btn-mini" onclick="addPlot()" title="增加空示波器">+</button>
         <button class="btn-mini" onclick="removePlot()" title="删除空示波器">−</button>
+        <button class="btn-mini" onclick="clearSignals()" title="清空所有信号">清空</button>
       </span></div>` +
     state.signals.map(s => `
       <div class="sig-sidebar-row" id="sigrow-${s.slot}">
@@ -277,6 +278,18 @@ function removeSignal(slot) {
   });
   saveSelectedSignals();   // 持久化:刷新后恢复
   draw();   // syncPlots 会自动移除空示波器
+  if (currentTab() === "sigstats") loadSigStats();
+}
+
+/* 清空所有信号(含空示波器) */
+function clearSignals() {
+  if (!state.signals.length) return;
+  state.signals = [];
+  state.plotIds = [];
+  state.plotSeq = 1;
+  document.querySelectorAll(".sig-item.active").forEach(el => el.classList.remove("active"));
+  saveSelectedSignals();   // 保存空数组 = 标记"已清空",刷新后不再自动选默认
+  draw();
   if (currentTab() === "sigstats") loadSigStats();
 }
 
@@ -932,17 +945,18 @@ async function loadDbcTree() {
   }
   document.getElementById("tree-hint")?.remove();
 
-  // 恢复上次选择的信号(刷新保留);无保存则自动选中第一个有数据的报文前两个信号
-  let restored = false;
-  try {
-    const saved = JSON.parse(localStorage.getItem(LS_SIG) || "null");
-    restored = !!(saved && saved.blf === state.blf && saved.signals && saved.signals.length);
-  } catch (e) { /* 忽略 */ }
-  if (restored) {
-    const n = await restoreSelectedSignals();
-    if (n > 0) showTip(`已恢复上次选择的 ${n} 个信号`);
+  // 恢复上次选择的信号(刷新保留);仅"首次使用(无记录)"才自动选默认信号
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(LS_SIG) || "null"); } catch (e) { /* 忽略 */ }
+  if (saved && saved.blf === state.blf) {
+    // 有记录(含清空后的空数组)→ 尊重用户选择,不自动选默认
+    if (saved.signals && saved.signals.length) {
+      const n = await restoreSelectedSignals();
+      if (n > 0) showTip(`已恢复上次选择的 ${n} 个信号`);
+    }
     return;
   }
+  // 首次使用(无记录)→ 自动选中第一个有数据的报文前两个信号
   const firstCh = state.channels.find(c => c.messages && c.messages.length);
   if (firstCh) {
     const m0 = firstCh.messages.find(m => state.hasData.has(m.frame_id));
