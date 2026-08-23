@@ -1,16 +1,39 @@
 """DBC 解析:基于 cantools。"""
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 from typing import Union
 
 import cantools
 
 
+def _detect_encoding(raw: bytes) -> str:
+    """检测 DBC 文本编码:UTF-8 → GBK → GB18030 → latin-1。
+
+    不能靠 cantools 抛错回退(GBK 字节可能被宽松解码成乱码而不报错),
+    须用 strict 解码主动检测:GBK 双字节中文字符序列必然无法通过 UTF-8 严格校验。
+    """
+    for enc in ("utf-8", "gbk", "gb18030", "latin-1"):
+        try:
+            raw.decode(enc)
+            return enc
+        except UnicodeDecodeError:
+            continue
+    return "utf-8"
+
+
+@lru_cache(maxsize=32)
+def _load_cached(path_str: str, encoding: str):
+    return cantools.database.load_file(path_str, encoding=encoding)
+
+
 def load_database(path: Union[str, Path]):
-    """加载 DBC 数据库,失败抛 ValueError。"""
+    """加载 DBC 数据库,自动检测编码(支持 UTF-8 / GBK / GB18030),带缓存。"""
+    p = Path(path)
     try:
-        return cantools.database.load_file(str(path))
+        enc = _detect_encoding(p.read_bytes())
+        return _load_cached(str(p), enc)
     except Exception as e:
         raise ValueError(f"DBC 解析失败: {e}") from e
 
