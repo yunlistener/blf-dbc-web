@@ -238,10 +238,6 @@ function renderSigSidebar() {
       <div class="hint" style="padding:8px;font-size:11px">点击左侧信号树选择</div>`;
     return;
   }
-  // 示波器 id 列表(含空示波器)
-  const plotIds = state.plotIds.slice().sort((a, b) => a - b);
-  const plotOptions = pid => plotIds.map(x =>
-    `<option value="${x}" ${x === pid ? "selected" : ""}>示波器 ${x}</option>`).join("");
   box.innerHTML = `<div class="sig-sidebar-title">已选信号 (${state.signals.length}/${MAX_SERIES})
       <span class="sig-sidebar-actions">
         <button class="btn-mini" onclick="addPlot()" title="增加空示波器">+</button>
@@ -253,7 +249,6 @@ function renderSigSidebar() {
         <span class="dot" style="background:${s.color}"></span>
         <span class="sname" title="${s.signal}">${s.signal}</span>
         <span class="sval" id="sigval-${s.slot}">—</span>
-        <select class="plot-sel" title="显示在哪个示波器" onchange="moveSignalToPlot(${s.slot}, this.value)">${plotOptions(s.plotId)}</select>
         <span class="srm" title="移除" onclick="removeSignal(${s.slot})">✕</span>
       </div>`).join("");
   // 行 hover → tooltip 显示信号详情
@@ -910,7 +905,8 @@ async function loadDbcTree() {
         const item = document.createElement("div");
         item.className = "sig-item";
         item.innerHTML = `<span class="sig-dot"></span> <span class="sig-name">${s}</span> <span class="sig-unit">${m.frame_id_hex}</span>`;
-        // 信号树仅浏览/搜索,选择在示波器内进行(+ 信号按钮)
+        // 信号树点击:添加/删除该信号(复用空示波器)
+        item.onclick = () => toggleSignal(m, s, item, ch.channel);
         item.dataset.sig = s;
         item.dataset.ch = String(ch.channel);
         list.appendChild(item);
