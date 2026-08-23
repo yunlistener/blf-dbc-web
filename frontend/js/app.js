@@ -557,8 +557,9 @@ async function loadDbcTree() {
       mhead.className = "msg-head";
       const sender = (m.senders && m.senders.length) ? m.senders[0] : "";
       const senderTip = (m.senders || []).join(", ");
+      const nc = sender ? nodeColor(sender) : "";
       mhead.innerHTML = `<span class="caret">▸</span>
-        ${sender ? `<span class="msg-tag" title="发送节点: ${senderTip}">${sender}</span>` : ""}
+        ${sender ? `<span class="msg-tag" style="background:${nc}26;border-color:${nc}55;color:${nc}" title="发送节点: ${senderTip}">${sender}</span>` : ""}
         <span class="msg-id">${m.frame_id_hex}</span>
         <span class="msg-name">${m.name}</span>
         <span class="msg-count">${m.signal_count} 信号</span>`;
@@ -609,7 +610,16 @@ async function loadDbcTree() {
   onTraceMsgChange();
 }
 
-/* 信号树搜索:按报文 ID(hex)/报文名/信号名实时过滤 */
+/* ECU 节点标签调色板:同一节点始终同色 */
+const NODE_COLORS = ["#4da3ff", "#ffb84d", "#5ad47a", "#ff6b6b", "#c77dff",
+                     "#4dd6c8", "#f472b6", "#a3e635", "#fb923c", "#60a5fa"];
+function nodeColor(name) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return NODE_COLORS[h % NODE_COLORS.length];
+}
+
+/* 信号树搜索:按报文 ID(hex)/报文名/发送 ECU/信号名实时过滤 */
 function filterTree(q) {
   q = (q || "").trim().toLowerCase();
   const qHex = q.replace(/^0x/, "");
@@ -627,7 +637,9 @@ function filterTree(q) {
       if (!q) {
         msgMatch = true;
       } else {
-        msgMatch = idTxt.includes(q) || idTxt.replace("0x", "").includes(qHex) || nameTxt.includes(q);
+        const senderTxt = head.querySelector(".msg-tag")?.textContent.toLowerCase() || "";
+        msgMatch = idTxt.includes(q) || idTxt.replace("0x", "").includes(qHex) ||
+                   nameTxt.includes(q) || senderTxt.includes(q);
         // 信号匹配:显示命中的信号项
         sigList.querySelectorAll(".sig-item").forEach(si => {
           const sn = si.querySelector(".sig-name").textContent.toLowerCase();
@@ -656,6 +668,34 @@ function filterTree(q) {
     g.querySelector(".chan-body").style.display = groupVisible ? "" : "none";
     g.querySelector(".chan-head .caret").textContent = groupVisible ? "▾" : "▸";
   });
+}
+
+/* 信号树排序:按 frame ID 或发送 ECU */
+let treeSortMode = "id";
+function toggleTreeSort() {
+  treeSortMode = treeSortMode === "id" ? "ecus" : "id";
+  document.getElementById("tree-sort").textContent =
+    treeSortMode === "id" ? "排序: ID" : "排序: ECU";
+  sortTree();
+}
+function sortTree() {
+  const mode = treeSortMode;
+  document.querySelectorAll(".chan-group .chan-body").forEach(body => {
+    const items = Array.from(body.querySelectorAll(".msg-item"));
+    items.sort((a, b) => {
+      const idA = parseInt(a.querySelector(".msg-id").textContent, 16);
+      const idB = parseInt(b.querySelector(".msg-id").textContent, 16);
+      if (mode === "ecus") {
+        const ea = (a.querySelector(".msg-tag")?.textContent || "").toLowerCase();
+        const eb = (b.querySelector(".msg-tag")?.textContent || "").toLowerCase();
+        if (ea !== eb) return ea < eb ? -1 : 1;
+      }
+      return idA - idB;
+    });
+    items.forEach(it => body.appendChild(it));
+  });
+  // 排序后重新应用当前搜索
+  filterTree(document.getElementById("tree-search").value);
 }
 
 async function toggleSignal(msg, signal, item, channel) {
