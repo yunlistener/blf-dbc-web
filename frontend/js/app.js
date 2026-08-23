@@ -1665,6 +1665,7 @@ document.getElementById("cfg-blf").addEventListener("change", () => refreshBlfVi
 async function init() {
   try { state.config = await api("/api/config"); } catch (e) { state.config = {}; }
   await loadFiles();
+  fillConfig();        // 填充配置抽屉(BusLog 下拉/通道 DBC 映射)—— 渲染层替换时丢失的调用
   connectReplay();   // 预连接播放 WS(避免首次播放的连接延迟/失败)
 }
 
