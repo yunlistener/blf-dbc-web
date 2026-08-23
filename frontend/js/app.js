@@ -118,30 +118,68 @@ async function startUpload() {
 }
 
 /* ---------- uPlot ---------- */
-function onCursorMove(u, x, y) {
-  const t = u.posToVal(x, "x");
-  document.getElementById("ro-time").textContent = t.toFixed(3) + " s";
+/* 值表信号格式化显示:数值 或 名称(值) */
+function fmtSigVal(s, v) {
+  if (v != null && typeof v === "number" && s.choices) {
+    const c = s.choices[String(v)];
+    if (c && c.name) return `${c.name}(${v})`;
+  }
+  return fmtVal(v);
+}
+
+const cursorTip = document.getElementById("cursor-tip");
+function hideCursorTip() { cursorTip.style.display = "none"; }
+
+function showCursorTipAt(x, y, html) {
+  cursorTip.innerHTML = html;
+  cursorTip.style.display = "block";
+  // 防止超出视口边缘
+  let tx = x + 14, ty = y - 12;
+  const tw = cursorTip.offsetWidth, th = cursorTip.offsetHeight;
+  if (tx + tw > window.innerWidth - 8) tx = x - tw - 14;
+  if (ty + th > window.innerHeight - 8) ty = y - th - 14;
+  cursorTip.style.left = Math.max(8, tx) + "px";
+  cursorTip.style.top = Math.max(8, ty) + "px";
+}
+
+/* 更新已选信号列的值(不弹 tooltip) */
+function updateSigVals(u, x) {
   const idx = u.posToIdx(x);
-  const box = document.getElementById("ro-signals");
-  box.innerHTML = "";
   state.signals.forEach(s => {
     const v = u.data[s.slot] ? u.data[s.slot][idx] : null;
-    let display = fmtVal(v);
-    // 值表信号:数值 → 查 choices 显示 名称(值),如 Valid(0)
-    if (v != null && typeof v === "number" && s.choices) {
-      const c = s.choices[String(v)];
-      if (c && c.name) display = `${c.name}(${v})`;
-    }
-    const div = document.createElement("span");
-    div.className = "ro-sig-val";
-    div.innerHTML = `<span class="dot" style="background:${s.color}"></span>
-      ${s.signal}: <b>${display}</b>
-      <span class="u">${s.unit || ""}</span>`;
-    box.appendChild(div);
-    // 同步左侧信号列的当前值
     const valEl = document.getElementById(`sigval-${s.slot}`);
-    if (valEl) valEl.textContent = display;
+    if (valEl) valEl.textContent = fmtSigVal(s, v);
   });
+}
+
+/* 光标移动:更新信号列值 + 显示 tooltip(时间 + 所有信号值) */
+function onCursorMove(u, x, y) {
+  updateSigVals(u, x);
+  const t = u.posToVal(x, "x");
+  const idx = u.posToIdx(x);
+  const rows = [`<div class="tip-row">时间 <b>${t.toFixed(3)} s</b></div>`];
+  state.signals.forEach(s => {
+    const v = u.data[s.slot] ? u.data[s.slot][idx] : null;
+    rows.push(`<div class="tip-row"><span class="dot" style="background:${s.color}"></span>` +
+      `${s.signal}: <b>${fmtSigVal(s, v)}</b><span class="u">${s.unit || ""}</span></div>`);
+  });
+  // x/y 是 bbox 内 CSS 坐标 → 转页面坐标(bbox 是物理像素,除以 pxRatio)
+  const rect = u.over.getBoundingClientRect();
+  const pxr = uPlot.pxRatio || 1;
+  showCursorTipAt(rect.left + u.bbox.left / pxr + x, rect.top + u.bbox.top / pxr + y, rows.join(""));
+}
+
+/* 已选信号行 hover:显示该信号详情 */
+function showSigRowTip(s, el) {
+  const rect = el.getBoundingClientRect();
+  const ch = state.channels.find(c => c.channel === s.channel);
+  const msg = ch && ch.messages ? ch.messages.find(m => m.frame_id === s.frame_id) : null;
+  const val = document.getElementById(`sigval-${s.slot}`)?.textContent || "—";
+  const html =
+    `<div class="tip-row"><b>${s.signal}</b> <span class="u">${s.unit || ""}</span></div>` +
+    `<div class="tip-dim">报文 ${msg ? msg.name : ""} (0x${s.frame_id.toString(16)}) · 通道 ${s.channel}</div>` +
+    `<div class="tip-row">当前值 <b>${val}</b></div>`;
+  showCursorTipAt(rect.right + 8, rect.top, html);
 }
 
 /* 左侧已选信号列:颜色标记 + 信号名 + 当前值 + 移除 */
@@ -154,12 +192,19 @@ function renderSigSidebar() {
   }
   box.innerHTML = `<div class="sig-sidebar-title">已选信号 (${state.signals.length}/${MAX_SERIES})</div>` +
     state.signals.map(s => `
-      <div class="sig-sidebar-row">
+      <div class="sig-sidebar-row" id="sigrow-${s.slot}">
         <span class="dot" style="background:${s.color}"></span>
         <span class="sname" title="${s.signal}">${s.signal}</span>
         <span class="sval" id="sigval-${s.slot}">—</span>
         <span class="srm" title="移除" onclick="removeSignal(${s.slot})">✕</span>
       </div>`).join("");
+  // 行 hover → tooltip 显示信号详情
+  state.signals.forEach(s => {
+    const row = document.getElementById(`sigrow-${s.slot}`);
+    if (!row) return;
+    row.addEventListener("mouseenter", () => showSigRowTip(s, row));
+    row.addEventListener("mouseleave", hideCursorTip);
+  });
 }
 
 /* 从已选列表移除信号 */
@@ -186,7 +231,7 @@ function draw() {
       for (let i = 1; i <= MAX_SERIES; i++) u.setSeries(i, { show: false });
       u.setData([[], ...Array(MAX_SERIES).fill([])]);
     }
-    document.getElementById("ro-signals").innerHTML = "";
+    hideCursorTip();
     return;
   }
   // 时间轴对齐
@@ -230,10 +275,10 @@ function draw() {
   state.uplot.setData(data);
   // 注:不再手动赋值 scale 范围(uPlot 全自动:setData 后 x/y auto 计算;
   // 缩放走 setScale,手动赋值会绕过其状态管理导致滚轮/框选失效)
-  // 手动刷新读数面板(注意:bbox 是物理像素,须除以 pxRatio 转 CSS 像素)
+  // 手动刷新已选信号列的值(不弹 tooltip;bbox 是物理像素,除以 pxRatio 转 CSS)
   const b = state.uplot.bbox;
   const pxr = uPlot.pxRatio || 1;
-  onCursorMove(state.uplot, b.width / pxr / 2, b.height / pxr / 2);
+  updateSigVals(state.uplot, b.width / pxr / 2);
 }
 
 /* 更新/隐藏某个系列槽位的显示配置 */
@@ -310,6 +355,7 @@ function makeUplotOpts() {
             });
           });
         }, { passive: false });
+        u.over.addEventListener("mouseleave", hideCursorTip);   // 移出图表 → 隐藏 tooltip
       }],
     },
   };
@@ -484,7 +530,7 @@ async function loadFiles() {
   state.signals = [];
   if (state.uplot) { state.uplot.destroy(); state.uplot = null; }
   document.getElementById("plot-wrap").innerHTML = "";
-  document.getElementById("ro-signals").innerHTML = "";
+  hideCursorTip();
   state.trace = { frameId: null, channel: null, offset: 0, limit: 200, search: null };
 
   state.stats = await api(`/api/blf/${state.blf}/stats`);

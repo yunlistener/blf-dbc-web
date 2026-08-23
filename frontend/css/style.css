@@ -197,6 +197,21 @@ body {
 
 #plot-wrap { flex: 1; min-width: 0; }
 
+/* 光标 tooltip:示波器/已选信号 hover 时显示读数 */
+.cursor-tip {
+  position: fixed; z-index: 200; pointer-events: none;
+  background: rgba(24, 28, 36, .96);
+  border: 1px solid #3a4150; border-radius: 6px;
+  padding: 8px 10px; font-size: 11px; color: #e8ecf2;
+  font-family: ui-monospace, Menlo, monospace;
+  box-shadow: 0 4px 14px rgba(0,0,0,.5);
+  max-width: 340px; line-height: 1.7;
+}
+.cursor-tip .tip-row { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.cursor-tip .tip-row b { color: #e8ecf2; font-weight: 600; }
+.cursor-tip .tip-row .u { color: #5c6472; }
+.cursor-tip .tip-dim { color: #8a93a3; font-size: 10px; white-space: nowrap; }
+
 /* 光标读数面板 */
 .readout {
   display: flex;
