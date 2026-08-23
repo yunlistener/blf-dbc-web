@@ -460,13 +460,6 @@ function updatePlotData(p) {
   } else if (xData && xData.length) {
     p.uplot.setScale("x", { min: xData[0], max: xData[xData.length - 1] });
   }
-  // x 轴显示:只有最后一个非空窗口(动态更新,窗口增减/信号移动时生效)
-  const maxNonEmpty = Math.max(-1, ...state.plots.filter(x => x.sigs && x.sigs.length).map(x => x.id));
-  const xAxis = p.uplot.axes[0];
-  if (xAxis && xAxis.show !== (p.id === maxNonEmpty)) {
-    xAxis.show = p.id === maxNonEmpty;
-    p.uplot.redraw();
-  }
   // 刷新本示波器信号的已选列值
   const b = p.uplot.bbox;
   const pxr = uPlot.pxRatio || 1;
@@ -488,9 +481,6 @@ function broadcastX(u, min, max) {
 /* 单个示波器窗口的 uPlot 配置 */
 function makePlotOpts(p) {
   const sigs = p.sigs;
-  // 共享时间轴:只有最后一个非空窗口显示 x 轴刻度(其余隐藏,网格线保留)
-  const maxNonEmpty = Math.max(-1, ...state.plots.filter(x => x.sigs && x.sigs.length).map(x => x.id));
-  const isLast = p.id === maxNonEmpty;
   // 每个信号独立 y 轴(CANoe 式):第 1 个左轴,其余右轴(信号色刻度),同窗不互相压扁
   const series = [{}, ...sigs.map((s, i) => ({
     show: true, label: s.signal, stroke: () => s.color,
@@ -502,24 +492,24 @@ function makePlotOpts(p) {
   // 预创建 10 个 y 轴 scale(窗口信号数增减时 series 引用的 scale 始终存在)
   for (let i = 0; i < 10; i++) scales[i === 0 ? "y" : "y" + (i + 1)] = { auto: true };
   const axes = [
-    // x 轴(下):只在最后一个非空窗口显示 → 视觉上共享一条时间轴
-    // ⚠️ 必须显式 scale:"x" + side:3(底部),否则 uPlot 默认侧边/猜测 scale 导致错位
-    { scale: "x", side: 3, show: isLast, stroke: "#8a93a3", grid: { stroke: "#242830", width: 1 },
+    // x 轴:每个窗口底部都有时间轴(时间同步后刻度一致)
+    // ⚠️ uPlot 1.6 side 枚举:0=上 1=右 2=下 3=左(与我们习惯相反!)
+    { scale: "x", side: 2, show: true, stroke: "#8a93a3", grid: { stroke: "#242830", width: 1 },
       ticks: { stroke: "#3a4150" }, font: "11px ui-monospace, Menlo",
       values: (u, vals) => vals.map(v => v.toFixed(2) + "s") },
-    // 第 1 个信号:左 y 轴
-    { scale: "y", side: 0, show: true, stroke: "#8a93a3", grid: { stroke: "#242830", width: 1 },
+    // 第 1 个信号:左 y 轴(side:3=左)
+    { scale: "y", side: 3, show: true, stroke: "#8a93a3", grid: { stroke: "#242830", width: 1 },
       ticks: { stroke: "#3a4150" }, font: "10px ui-monospace, Menlo", size: 46 },
   ];
-  // 其余信号:独立右轴(信号色刻度);未使用的 y 轴显式隐藏,防止 uPlot 自动生成多余轴
+  // 其余信号:独立右轴(side:1=右,信号色刻度);未使用的 y 轴显式隐藏,防止 uPlot 自动生成多余轴
   for (let i = 1; i < 10; i++) {
     const key = "y" + (i + 1);
     const s = sigs[i];
     axes.push(s
-      ? { scale: key, side: 2, show: true, stroke: s.color,
+      ? { scale: key, side: 1, show: true, stroke: s.color,
           grid: { show: false }, ticks: { stroke: s.color },
           font: "10px ui-monospace, Menlo", size: 40 }
-      : { scale: key, side: 2, show: false });
+      : { scale: key, side: 1, show: false });
   }
   return {
     width: Math.max(200, p.canvasEl.clientWidth - 8),
