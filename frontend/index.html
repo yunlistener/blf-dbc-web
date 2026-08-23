@@ -50,6 +50,7 @@
       <div id="tabs">
         <div class="tab active" data-tab="trace" onclick="switchTab('trace')">Trace 报文流</div>
         <div class="tab" data-tab="stats" onclick="switchTab('stats')">ID 统计</div>
+        <div class="tab" data-tab="sigstats" onclick="switchTab('sigstats')">信号统计</div>
       </div>
 
       <!-- Trace 面板 -->
@@ -76,7 +77,13 @@
 
       <!-- ID 统计面板 -->
       <div id="panel-stats" class="panel" style="display:none">
+        <div id="busload-box" class="busload-box"></div>
         <div id="stats-box" class="stats-box"><div class="hint">加载中…</div></div>
+      </div>
+
+      <!-- 信号统计面板 -->
+      <div id="panel-sigstats" class="panel" style="display:none">
+        <div id="sigstats-box" class="stats-box"><div class="hint">请先选择信号(点击左侧信号树)</div></div>
       </div>
     </main>
 
@@ -159,6 +166,6 @@
   <div id="cursor-tip" class="cursor-tip" style="display:none"></div>
 
 <script src="vendor/uPlot.min.js"></script>
-<script src="js/app.js?v=23"></script>
+<script src="js/app.js?v=24"></script>
 </body>
 </html>

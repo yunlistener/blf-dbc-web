@@ -250,7 +250,39 @@ body {
 /* 面板 */
 .panel { background: #16181d; border-top: 1px solid #2b2f38; }
 #panel-trace, #panel-stats { height: 260px; display: flex; flex-direction: column; }
+#panel-sigstats { height: 260px; display: flex; flex-direction: column; }
 #panel-stats { overflow-y: auto; }
+#panel-sigstats { overflow-y: auto; }
+
+/* Bus Load 概览条 */
+.busload-box {
+  display: flex; flex-wrap: wrap; gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #2b2f38;
+  background: #1a1d23;
+}
+.busload-item {
+  background: #14171d; border: 1px solid #2c323d; border-radius: 6px;
+  padding: 8px 12px; font-size: 12px; color: #c9ced6;
+}
+.busload-item b { color: #4da3ff; font-size: 16px; margin-right: 4px; }
+.busload-item .dim { color: #5c6472; font-size: 11px; }
+/* 信号统计表格 */
+table.sig-stats {
+  width: 100%; border-collapse: collapse; font-size: 12px;
+}
+table.sig-stats th, table.sig-stats td {
+  padding: 6px 10px; text-align: left;
+  border-bottom: 1px solid #232730; white-space: nowrap;
+}
+table.sig-stats th { color: #8a93a3; font-weight: 600; }
+table.sig-stats td { color: #c9ced6; font-family: ui-monospace, Menlo, monospace; }
+table.sig-stats tr:hover td { background: #1d2129; }
+table.sig-stats .sec td {
+  color: #4da3ff; font-weight: 600; background: #171a20;
+  font-family: inherit; padding-top: 10px;
+}
+.sig-stats .warn { color: #ffb84d; }
 
 /* Trace 表格 */
 .trace-toolbar {

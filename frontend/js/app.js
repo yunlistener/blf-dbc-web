@@ -543,6 +543,7 @@ async function loadFiles() {
   if (state.uplot) { state.uplot.destroy(); state.uplot = null; }
   document.getElementById("plot-wrap").innerHTML = "";
   hideCursorTip();
+  document.getElementById("busload-box").dataset.loaded = "";   // 文件切换 → Bus Load 重新加载
   state.trace = { frameId: null, channel: null, offset: 0, limit: 200, search: null };
 
   state.stats = await api(`/api/blf/${state.blf}/stats`);
@@ -1001,8 +1002,96 @@ function switchTab(name) {
     t.classList.toggle("active", t.dataset.tab === name));
   document.getElementById("panel-trace").style.display = name === "trace" ? "" : "none";
   document.getElementById("panel-stats").style.display = name === "stats" ? "" : "none";
+  document.getElementById("panel-sigstats").style.display = name === "sigstats" ? "" : "none";
   if (name === "trace" && !state.trace.frameId) onTraceMsgChange();
-  if (name === "stats") renderStats();
+  if (name === "stats") { renderStats(); loadBusLoad(); }
+  if (name === "sigstats") loadSigStats();
+}
+
+/* Bus Load 概览条(ID 统计 tab 顶部) */
+async function loadBusLoad() {
+  const box = document.getElementById("busload-box");
+  if (box.dataset.loaded) return;
+  try {
+    const r = await api(`/api/blf/${state.blf}/bus-load`);
+    const items = Object.entries(r.channels || {}).map(([ch, v]) =>
+      `<div class="busload-item">通道 ${ch} <b>${v.bus_load_pct}%</b>
+        <span class="dim">${v.frames.toLocaleString()} 帧 · 占用 ${v.bus_time_s}s/${v.duration_s}s</span></div>`).join("");
+    box.innerHTML = `<div class="busload-item">总线负载 <b>${r.bus_type.toUpperCase()}</b>
+        <span class="dim">仲裁 ${(r.arbitration_baudrate / 1000)}k · 数据 ${(r.data_baudrate / 1000)}k</span></div>` + items;
+    box.dataset.loaded = "1";
+  } catch (e) {
+    box.innerHTML = `<div class="busload-item dim">Bus Load 加载失败: ${e.message}</div>`;
+  }
+}
+
+/* 信号统计 tab:已选信号的数值统计 + 所属报文周期/抖动/丢帧 */
+async function loadSigStats() {
+  const box = document.getElementById("sigstats-box");
+  if (!state.signals.length) {
+    box.innerHTML = `<div class="hint">请先选择信号(点击左侧信号树)</div>`;
+    return;
+  }
+  box.innerHTML = `<div class="hint">加载中…</div>`;
+  try {
+    const ch = state.channels.find(c => c.channel === state.signals[0].channel);
+    const dbc = (ch && ch.dbc) || state.signals[0].dbc;
+    const rows = [];
+    const msgCache = {};
+    for (const s of state.signals) {
+      const st = await api(`/api/blf/${state.blf}/signal-stats?dbc=${encodeURIComponent(dbc)}` +
+        `&frame_id=0x${s.frame_id.toString(16)}&signal=${encodeURIComponent(s.signal)}&channel=${s.channel}`);
+      let cs = msgCache[s.frame_id];
+      if (!cs) {
+        cs = await api(`/api/blf/${state.blf}/cycle-stats?dbc=${encodeURIComponent(dbc)}` +
+          `&frame_id=0x${s.frame_id.toString(16)}&channel=${s.channel}`);
+        msgCache[s.frame_id] = cs;
+      }
+      rows.push({ s, st, cs });
+    }
+    // 信号统计表
+    let html = `<table class="sig-stats"><thead><tr>
+      <th>信号</th><th>通道</th><th>点数</th><th>min</th><th>max</th><th>mean</th><th>std</th><th>最后值</th>
+      </tr></thead><tbody>`;
+    for (const { s, st } of rows) {
+      html += `<tr>
+        <td><span class="dot" style="background:${s.color};display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px"></span>${s.signal}</td>
+        <td>CH${s.channel}</td>
+        <td>${st.count}</td>
+        <td>${st.min ?? "—"}</td><td>${st.max ?? "—"}</td>
+        <td>${st.mean ?? "—"}</td><td>${st.std ?? "—"}</td>
+        <td>${st.last ?? "—"}</td>
+      </tr>`;
+      if (st.choices_dist) {
+        const dist = Object.entries(st.choices_dist)
+          .map(([k, v]) => `${k}: ${v}`).join(" · ");
+        html += `<tr><td colspan="8" style="color:#8a93a3">状态分布: ${dist}</td></tr>`;
+      }
+    }
+    html += `</tbody></table>`;
+    // 报文周期段
+    const seenMsg = new Set();
+    html += `<table class="sig-stats"><tbody>`;
+    for (const { s, cs } of rows) {
+      if (seenMsg.has(s.frame_id)) continue;
+      seenMsg.add(s.frame_id);
+      const exp = cs.expected_ms ? `${cs.expected_ms} ms` : "—";
+      html += `<tr class="sec"><td colspan="8">报文 ${cs.name} (0x${s.frame_id.toString(16)}) · CH${s.channel}</td></tr>
+        <tr>
+          <td>期望周期</td><td>${exp}</td><td>实测平均</td><td>${cs.avg_ms ?? "—"} ms</td>
+          <td>min</td><td>${cs.min_ms ?? "—"} ms</td><td>max</td><td>${cs.max_ms ?? "—"} ms</td>
+        </tr>
+        <tr>
+          <td>抖动(峰峰)</td><td class="${(cs.jitter_ms ?? 0) > (cs.expected_ms || 1) * 0.3 ? "warn" : ""}">${cs.jitter_ms ?? "—"} ms</td>
+          <td>丢帧</td><td class="${(cs.lost_frames ?? 0) > 0 ? "warn" : ""}">${cs.lost_frames ?? "—"}</td>
+          <td>丢帧率</td><td>${cs.lost_pct ?? "—"}%</td><td colspan="2"></td>
+        </tr>`;
+    }
+    html += `</tbody></table>`;
+    box.innerHTML = html;
+  } catch (e) {
+    box.innerHTML = `<div class="hint">加载失败: ${e.message}</div>`;
+  }
 }
 
 document.getElementById("cfg-bus-type").addEventListener("change", syncBusTypeUI);
