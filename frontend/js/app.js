@@ -279,7 +279,8 @@ function moveSignalToPlot(slot, pid) {
   const s = state.signals.find(x => x.slot === slot);
   if (!s) return;
   s.plotId = parseInt(pid, 10);
-  draw();
+  saveSelectedSignals();   // 窗口分配也持久化(刷新后保持合并关系)
+  draw();                  // 全量重建:目标窗口 y 范围自动重算(覆盖全部信号)
 }
 
 /* 已选信号持久化(localStorage,含 blf 名防止跨文件误恢复) */
@@ -288,7 +289,7 @@ function saveSelectedSignals() {
   try {
     localStorage.setItem(LS_SIG, JSON.stringify({
       blf: state.blf,
-      signals: state.signals.map(s => ({ frame_id: s.frame_id, signal: s.signal, channel: s.channel })),
+      signals: state.signals.map(s => ({ frame_id: s.frame_id, signal: s.signal, channel: s.channel, plotId: s.plotId })),
     }));
   } catch (e) { /* 忽略 */ }
 }
@@ -299,7 +300,7 @@ window.addEventListener("beforeunload", () => {
 async function restoreSelectedSignals() {
   try {
     const saved = JSON.parse(localStorage.getItem(LS_SIG) || "null");
-    if (!saved || saved.blf !== state.blf || !saved.signals || !saved.signals.length) return false;
+    if (!saved || saved.blf !== state.blf || !saved.signals || !saved.signals.length) return 0;
     const items = Array.from(document.querySelectorAll(".chan-group .sig-item"));
     let restored = 0;
     for (const rec of saved.signals.slice(0, MAX_SERIES)) {
@@ -314,7 +315,15 @@ async function restoreSelectedSignals() {
         restored++;
       }
     }
-    return restored;   // 返回恢复数量(loadDbcTree 提示用)
+    // 恢复窗口分配:按保存的 plotId 分组(刷新后保持信号合并到同一示波器的关系)
+    const savedIds = saved.signals.map(r => r.plotId).filter(x => x != null);
+    if (savedIds.length && state.signals.length) {
+      state.plotIds = [...new Set(savedIds)].sort((a, b) => a - b);
+      state.signals.forEach((s, i) => { s.plotId = savedIds[i] ?? s.plotId; });
+      state.plotSeq = Math.max(state.plotSeq, ...state.plotIds) + 1;
+      draw();
+    }
+    return restored;
   } catch (e) {
     return 0;
   }
