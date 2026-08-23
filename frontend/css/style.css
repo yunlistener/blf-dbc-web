@@ -449,6 +449,8 @@ td.t-data { color: #c9a86a; }
 
 /* 示波器添加信号模态 */
 .plot-add { margin-left: 6px; }
+.pt-del { cursor: pointer; color: #5c6472; margin: 0 2px; font-size: 10px; padding: 0 2px; }
+.pt-del:hover { color: #ff6b6b; background: rgba(255,107,107,.12); border-radius: 3px; }
 .nodata-tag {
   margin-left: 6px; padding: 0 4px; border-radius: 3px;
   background: rgba(255, 107, 107, .15); color: #ff6b6b;

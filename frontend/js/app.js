@@ -265,12 +265,16 @@ function removeSignal(slot) {
   const s = state.signals.find(x => x.slot === slot);
   if (!s) return;
   state.signals = state.signals.filter(x => x !== s);
-  // 同步信号树中的选中态
-  document.querySelectorAll(".sig-item.active").forEach(el => {
-    if (el.dataset.sig === s.signal && String(el.dataset.ch) === String(s.channel)) {
-      el.classList.remove("active");
-    }
-  });
+  // 该信号(frame_id+signal+channel)还有其他示波器条目则保留 active
+  const still = state.signals.some(x =>
+    x.frame_id === s.frame_id && x.signal === s.signal && x.channel === s.channel);
+  if (!still) {
+    document.querySelectorAll(".sig-item.active").forEach(el => {
+      if (el.dataset.sig === s.signal && String(el.dataset.ch) === String(s.channel)) {
+        el.classList.remove("active");
+      }
+    });
+  }
   saveSelectedSignals();   // 持久化:刷新后恢复
   draw();   // syncPlots 会自动移除空示波器
   if (currentTab() === "sigstats") loadSigStats();
@@ -405,11 +409,11 @@ function removePlot() {
 /* 单个示波器的数据与实例 */
 function updatePlotData(p) {
   const sigs = p.sigs;
-  // 标题:示波器号 + 色点 + 信号名
+  // 标题:示波器号 + 色点 + 信号名(带删除 ✕)
   p.title.innerHTML = `<span style="color:#4da3ff;font-weight:600">示波器 ${p.id}</span>` +
     `<button class="btn-mini plot-add" onclick="openAddSignal(${p.id})" title="向此示波器添加信号">+ 信号</button>` +
     (sigs.length
-      ? sigs.map(s => `<span class="pt-dot" style="background:${s.color}"></span><span>${s.signal}${s.unit ? " (" + s.unit + ")" : ""}</span>`).join("")
+      ? sigs.map(s => `<span class="pt-dot" style="background:${s.color}"></span><span>${s.signal}${s.unit ? " (" + s.unit + ")" : ""}</span><span class="pt-del" onclick="removeSignal(${s.slot})" title="从示波器移除 ${s.signal}">✕</span>`).join("")
       : `<span style="color:#5c6472">(空)点 [ + 信号 ] 添加,或点 [+] 增空示波器</span>`);
   // 空示波器:不创建 uPlot
   if (!sigs.length) {
@@ -432,6 +436,16 @@ function updatePlotData(p) {
         const raw = s.data.values[j];
         // 值表信号 decode 返回 {name, value} 对象 → 取 value 数值画线
         v[k] = (raw != null && typeof raw === "object" && "value" in raw) ? raw.value : raw;
+      }
+    }
+    // 值表信号前向填充:null 间隙用上一采样值填充(状态保持到下一采样)。
+    // 稀疏采样与密集信号共用时间轴时,值表信号大量位置是 null,uPlot 折线遇 null 断线,
+    // 孤立采样点连不成线导致整条线不渲染;前向填充后 linear 折线呈现连续阶梯状。
+    if (s.choices) {
+      let last = null;
+      for (let k = 0; k < v.length; k++) {
+        if (v[k] != null) last = v[k];
+        else if (last != null) v[k] = last;
       }
     }
     per[i + 1] = v;
@@ -517,10 +531,13 @@ function makePlotOpts(p) {
       scale: "y", auto: true, width: 2,
       points: { show: () => false },
     };
-    // 值表信号:折线图(默认 linear,离散值连线)。⚠️ 不用 uPlot.paths.stepped:
-    // 它内部依赖 scale.dir/ori,y 轴未配这些字段时 z=NaN → path 为空 → 曲线不渲染
+    // 值表信号:连续阶梯线(离散状态在两次采样间保持,不做斜线插值)。
+    // 稀疏采样(如 0.1s)与密集信号(0.01s)共用时间轴时,值表信号 90%+ 位置是 null,
+    // uPlot 折线在 null 处断线、孤立采样点连不成线 → 整条线不渲染;由 updatePlotData
+    // 前向填充 null(状态保持)后,linear 折线自然呈现阶梯状。
     if (s.choices) {
       conf.width = 1.5;
+      conf.points = { show: true, size: 5 };   // 采样点标记:离散状态在真实采样点画小圆点
     }
     return conf;
   })];
@@ -1103,8 +1120,28 @@ async function addSignal(msg, signal, channel, plotId) {
 }
 
 /* 向指定示波器添加信号(示波器内入口调用) */
-async function addSignalToPlot(plotId, msg, signal, channel) {
-  const ok = await addSignal(msg, signal, channel, plotId);
+/* 从已选信号复制到指定示波器(复用已解码数据,免 API) */
+function addSignalFromSignal(src, plotId) {
+  const existing = state.signals.find(s => s.frame_id === src.frame_id && s.signal === src.signal && s.channel === src.channel && s.plotId === plotId);
+  if (existing) { showTip(`信号已显示在示波器 ${plotId}`); return false; }
+  if (state.signals.length >= MAX_SERIES) { showTip(`最多同时显示 ${MAX_SERIES} 个信号`); return false; }
+  const usedSlots = new Set(state.signals.map(s => s.slot));
+  const slot = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+    17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
+    33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48,
+    49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64].find(i => !usedSlots.has(i));
+  state.signals.push({ ...src, slot, plotId });
+  saveSelectedSignals();
+  draw();
+  if (currentTab() === "sigstats") loadSigStats();
+  return true;
+}
+
+/* 示波器内添加信号:从已选信号复制(按 slot 找源条目) */
+function addSignalToPlot(plotId, slot) {
+  const src = state.signals.find(s => s.slot === slot);
+  if (!src) return;
+  const ok = addSignalFromSignal(src, plotId);
   if (ok) closeAddSignal();
 }
 
@@ -1125,45 +1162,38 @@ function renderAddSignalList(q) {
   const box = document.getElementById("add-signal-list");
   box.innerHTML = "";
   const ql = (q || "").toLowerCase();
-  for (const ch of state.channels) {
-    for (const m of (ch.messages || [])) {
-      const sigs = m.signals || [];
-      const hasData = state.hasData && state.hasData.has(m.frame_id);
-      const match = !ql ||
-        String(m.frame_id_hex).toLowerCase().includes(ql) ||
-        (m.name || "").toLowerCase().includes(ql) ||
-        (m.senders || []).some(e => e.toLowerCase().includes(ql)) ||
-        sigs.some(s => s.toLowerCase().includes(ql));
-      if (!match) continue;
-      const mdiv = document.createElement("div");
-      mdiv.className = "add-msg";
-      const mhead = document.createElement("div");
-      mhead.className = "add-msg-head";
-      mhead.innerHTML = `<span class="caret">▾</span><span class="msg-id">${m.frame_id_hex}</span> ${m.name} <span class="dim">CH${ch.channel}</span>` +
-        (hasData ? "" : ` <span class="nodata-tag">无数据</span>`);
-      mhead.onclick = () => {
-        mdiv.querySelectorAll(".add-sig").forEach(x => x.style.display = x.style.display === "none" ? "" : "none");
-      };
-      mdiv.appendChild(mhead);
-      for (const s of sigs) {
-        const sdiv = document.createElement("div");
-        sdiv.className = "add-sig";
-        if (!hasData) {
-          sdiv.innerHTML = `<span class="sig-name" style="color:#5c6472">${s}</span>`;
-          sdiv.style.cursor = "default";
-        } else {
-          // 允许同一信号显示在多个示波器;标注已显示位置
-          const where = state.signals
-            .filter(ss => ss.signal === s && ss.frame_id === m.frame_id && ss.channel === ch.channel)
-            .map(ss => `示波器 ${ss.plotId}`).join("、");
-          sdiv.innerHTML = `<span class="sig-name">${s}</span>` +
-            (where ? ` <span class="dim">已在 ${where}</span>` : "");
-          sdiv.onclick = () => addSignalToPlot(addingPlot, m, s, ch.channel);
-        }
-        mdiv.appendChild(sdiv);
-      }
-      box.appendChild(mdiv);
-    }
+  if (!state.signals.length) {
+    box.innerHTML = `<div class="hint">已选信号列表为空<br>先在左侧信号树点选信号,再到这里分配到示波器</div>`;
+    return;
+  }
+  // 数据源:已选信号列表(按 frame_id+signal+channel 去重;同信号可分配到多个示波器)
+  const seen = new Set();
+  const items = [];
+  for (const s of state.signals) {
+    const key = `${s.frame_id}|${s.signal}|${s.channel}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    items.push(s);
+  }
+  const matched = items.filter(s =>
+    !ql ||
+    s.signal.toLowerCase().includes(ql) ||
+    ("0x" + s.frame_id.toString(16)).includes(ql) ||
+    (s.unit || "").toLowerCase().includes(ql));
+  for (const s of matched) {
+    const where = state.signals
+      .filter(ss => ss.frame_id === s.frame_id && ss.signal === s.signal && ss.channel === s.channel)
+      .map(ss => `示波器 ${ss.plotId}`).join("、");
+    const here = state.signals.some(ss =>
+      ss.frame_id === s.frame_id && ss.signal === s.signal && ss.channel === s.channel && ss.plotId === addingPlot);
+    const row = document.createElement("div");
+    row.className = "add-sig";
+    row.innerHTML = `<span class="sig-dot" style="background:${s.color}"></span>
+      <span class="sig-name">${s.signal}</span>
+      <span class="dim">${where ? `已在 ${where}` : ""}</span>
+      ${here ? `<span class="nodata-tag">已在此示波器</span>` : ""}`;
+    if (!here) row.onclick = () => addSignalToPlot(addingPlot, s.slot);
+    box.appendChild(row);
   }
   if (!box.children.length) box.innerHTML = `<div class="hint">无匹配信号</div>`;
 }
