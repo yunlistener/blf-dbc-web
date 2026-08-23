@@ -1127,9 +1127,11 @@ async function toggleSignal(msg, signal, item, channel) {
                 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
                 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58,
                 59, 60, 61, 62, 63, 64].find(i => !usedSlots.has(i));
-  // 默认每信号新建一个示波器
-  const pid = state.plotSeq++;
-  state.plotIds.push(pid);
+  // 分配示波器:优先复用空示波器,无空才新建
+  const usedPlotIds = new Set(state.signals.map(s => s.plotId));
+  const emptyPlot = state.plotIds.find(id => !usedPlotIds.has(id));
+  const pid = emptyPlot != null ? emptyPlot : state.plotSeq++;
+  if (emptyPlot == null) state.plotIds.push(pid);
   state.signals.push({ frame_id: msg.frame_id, signal, unit, color, slot, data, channel, dbc, choices, comment, senders, plotId: pid });
   saveSelectedSignals();   // 持久化:刷新后恢复
   draw();
