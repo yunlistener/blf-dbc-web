@@ -14,6 +14,7 @@ const state = {
   config: {},        // 工程配置(总线/波特率/文件/通道映射)
   channels: [],      // [{channel, frames, dbc, messages}]
   hasData: null,     // Set<frame_id> 日志中实际出现的报文 ID
+  lastCursorT: null, // 最后光标时刻(相对秒,信号行 tooltip 显示用)
 };
 
 function showTip(msg) { document.getElementById("st-tip").textContent = msg; }
@@ -156,12 +157,13 @@ function updateSigVals(u, x) {
 function onCursorMove(u, x, y) {
   updateSigVals(u, x);
   const t = u.posToVal(x, "x");
+  state.lastCursorT = t;   // 记录最后光标时刻(信号行 tooltip 用)
   const idx = u.posToIdx(x);
   const rows = [`<div class="tip-row">时间 <b>${t.toFixed(3)} s</b></div>`];
   state.signals.forEach(s => {
     const v = u.data[s.slot] ? u.data[s.slot][idx] : null;
     rows.push(`<div class="tip-row"><span class="dot" style="background:${s.color}"></span>` +
-      `${s.signal}: <b>${fmtSigVal(s, v)}</b><span class="u">${s.unit || ""}</span></div>`);
+      `${s.signal}: <b>${fmtSigVal(s, v)}</b><span class="u">${s.unit || ""}</span>${ecuTagHtml(s)}</div>`);
   });
   // x/y 是 bbox 内 CSS 坐标 → 转页面坐标(bbox 是物理像素,除以 pxRatio)
   const rect = u.over.getBoundingClientRect();
@@ -169,16 +171,26 @@ function onCursorMove(u, x, y) {
   showCursorTipAt(rect.left + u.bbox.left / pxr + x, rect.top + u.bbox.top / pxr + y, rows.join(""));
 }
 
-/* 已选信号行 hover:显示该信号详情 */
+/* 发送 ECU 的彩色 tag HTML(信号所属报文的第一发送者) */
+function ecuTagHtml(s) {
+  const ecu = s.senders && s.senders.length ? s.senders[0] : "";
+  if (!ecu) return "";
+  const nc = nodeColor(ecu);
+  return ` <span class="msg-tag" style="background:${nc}26;border-color:${nc}55;color:${nc}">${ecu}</span>`;
+}
+
+/* 已选信号行 hover:显示该信号详情(时间/ECU/值表名称/说明) */
 function showSigRowTip(s, el) {
   const rect = el.getBoundingClientRect();
   const ch = state.channels.find(c => c.channel === s.channel);
   const msg = ch && ch.messages ? ch.messages.find(m => m.frame_id === s.frame_id) : null;
   const val = document.getElementById(`sigval-${s.slot}`)?.textContent || "—";
+  const t = state.lastCursorT != null ? state.lastCursorT.toFixed(3) + " s" : "—";
   const html =
-    `<div class="tip-row"><b>${s.signal}</b> <span class="u">${s.unit || ""}</span></div>` +
-    `<div class="tip-dim">报文 ${msg ? msg.name : ""} (0x${s.frame_id.toString(16)}) · 通道 ${s.channel}</div>` +
-    `<div class="tip-row">当前值 <b>${val}</b></div>`;
+    `<div class="tip-row"><b>${s.signal}</b> <span class="u">${s.unit || ""}</span>${ecuTagHtml(s)}</div>` +
+    `<div class="tip-dim">报文 ${msg ? msg.name : ""} (0x${s.frame_id.toString(16)}) · 通道 ${s.channel} · 时间 ${t}</div>` +
+    `<div class="tip-row">当前值 <b>${val}</b></div>` +
+    (s.comment ? `<div class="tip-dim" style="white-space:normal;max-width:280px">💬 ${s.comment}</div>` : "");
   showCursorTipAt(rect.right + 8, rect.top, html);
 }
 
@@ -802,13 +814,15 @@ async function toggleSignal(msg, signal, item, channel) {
   const unit = sigDef?.unit || "";
   // 值表信号:保存 choices 映射 {raw值: {name, value}},读数时显示名称
   const choices = sigDef?.choices || null;
+  const comment = sigDef?.comment || "";        // 信号说明文字
+  const senders = detail.senders || [];          // 发送 ECU
 
   // 绝对时间戳 → 相对时间(以日志起始为 0)
   data.times = data.times.map(t => t - state.t0);
   // 槽位分配须与 push 同步完成(避免并发请求拿到相同槽位)
   const usedSlots = new Set(state.signals.map(s => s.slot));
   const slot = [1, 2, 3, 4, 5, 6].find(i => !usedSlots.has(i));
-  state.signals.push({ frame_id: msg.frame_id, signal, unit, color, slot, data, channel, dbc, choices });
+  state.signals.push({ frame_id: msg.frame_id, signal, unit, color, slot, data, channel, dbc, choices, comment, senders });
   draw();
 }
 

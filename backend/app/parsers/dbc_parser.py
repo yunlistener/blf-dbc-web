@@ -56,6 +56,7 @@ def message_detail(db, frame_id: int) -> dict | None:
                         "minimum": s.minimum,
                         "maximum": s.maximum,
                         "unit": s.unit,
+                        "comment": getattr(s, "comment", None),
                         "choices": s.choices,
                     }
                     for s in msg.signals
