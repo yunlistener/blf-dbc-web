@@ -243,8 +243,43 @@ function removeSignal(slot) {
     }
   });
   if (state.uplot) state.uplot.setSeries(slot, { show: false });
+  saveSelectedSignals();   // 持久化:刷新后恢复
   draw();
   if (currentTab() === "sigstats") loadSigStats();
+}
+
+/* 已选信号持久化(localStorage,含 blf 名防止跨文件误恢复) */
+const LS_SIG = "selectedSignals";
+function saveSelectedSignals() {
+  try {
+    localStorage.setItem(LS_SIG, JSON.stringify({
+      blf: state.blf,
+      signals: state.signals.map(s => ({ frame_id: s.frame_id, signal: s.signal, channel: s.channel })),
+    }));
+  } catch (e) { /* 忽略 */ }
+}
+async function restoreSelectedSignals() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LS_SIG) || "null");
+    if (!saved || saved.blf !== state.blf || !saved.signals || !saved.signals.length) return false;
+    const items = Array.from(document.querySelectorAll(".chan-group .sig-item"));
+    let restored = 0;
+    for (const rec of saved.signals.slice(0, MAX_SERIES)) {
+      const item = items.find(el =>
+        el.dataset.sig === rec.signal &&
+        el.dataset.ch === String(rec.channel) &&
+        parseInt(el.closest(".msg-item").querySelector(".msg-id").textContent, 16) === rec.frame_id);
+      const ch = state.channels.find(c => c.channel === rec.channel);
+      const msg = ch && ch.messages ? ch.messages.find(m => m.frame_id === rec.frame_id) : null;
+      if (item && msg && state.hasData.has(rec.frame_id)) {
+        await toggleSignal(msg, rec.signal, item, rec.channel);
+        restored++;
+      }
+    }
+    return restored > 0;
+  } catch (e) {
+    return false;
+  }
 }
 
 function draw() {
@@ -700,7 +735,16 @@ async function loadDbcTree() {
   }
   document.getElementById("tree-hint")?.remove();
 
-  // 自动选中第一个有数据的通道的前两个信号(demo 便利)
+  // 恢复上次选择的信号(刷新保留);无保存则自动选中第一个有数据的报文前两个信号
+  let restored = false;
+  try {
+    const saved = JSON.parse(localStorage.getItem(LS_SIG) || "null");
+    restored = !!(saved && saved.blf === state.blf && saved.signals && saved.signals.length);
+  } catch (e) { /* 忽略 */ }
+  if (restored) {
+    await restoreSelectedSignals();
+    return;
+  }
   const firstCh = state.channels.find(c => c.messages && c.messages.length);
   if (firstCh) {
     const m0 = firstCh.messages.find(m => state.hasData.has(m.frame_id));
@@ -868,6 +912,7 @@ async function toggleSignal(msg, signal, item, channel) {
   const usedSlots = new Set(state.signals.map(s => s.slot));
   const slot = [1, 2, 3, 4, 5, 6].find(i => !usedSlots.has(i));
   state.signals.push({ frame_id: msg.frame_id, signal, unit, color, slot, data, channel, dbc, choices, comment, senders });
+  saveSelectedSignals();   // 持久化:刷新后恢复
   draw();
   // 信号统计 tab 已打开时,新选信号要刷新统计
   if (currentTab() === "sigstats") loadSigStats();
