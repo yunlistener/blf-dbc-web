@@ -29,6 +29,10 @@
         <div class="hint" id="tree-hint">加载中…</div>
       </div>
     </aside>
+    <!-- 信号树右侧把手:点击收起/展开信号树 -->
+    <div class="drawer-handle" id="sidebar-handle" onclick="toggleSidebar()" title="报文/信号树">
+      <span class="handle-icon">▤</span><span class="handle-text">信号</span>
+    </div>
 
     <!-- 主区:曲线 + 底部面板 -->
     <main id="main">
@@ -72,10 +76,7 @@
       </div>
     </main>
 
-    <!-- 右侧把手(常驻):信号树 + 配置抽屉,点击展开/收回 -->
-    <div class="drawer-handle" id="sidebar-handle" onclick="toggleSidebar()" title="报文/信号树">
-      <span class="handle-icon">▤</span><span class="handle-text">信号</span>
-    </div>
+    <!-- 右侧把手(常驻):配置抽屉,点击展开/收回 -->
     <div class="drawer-handle" id="cfg-handle" onclick="toggleConfigDrawer()" title="工程配置">
       <span class="handle-icon">⚙</span><span class="handle-text">配置</span>
     </div>
