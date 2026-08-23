@@ -265,6 +265,10 @@ function saveSelectedSignals() {
     }));
   } catch (e) { /* 忽略 */ }
 }
+// 页面关闭/刷新前兜底保存(防任何遗漏路径)
+window.addEventListener("beforeunload", () => {
+  if (state.signals.length) saveSelectedSignals();
+});
 async function restoreSelectedSignals() {
   try {
     const saved = JSON.parse(localStorage.getItem(LS_SIG) || "null");
@@ -768,7 +772,8 @@ async function loadDbcTree() {
     restored = !!(saved && saved.blf === state.blf && saved.signals && saved.signals.length);
   } catch (e) { /* 忽略 */ }
   if (restored) {
-    await restoreSelectedSignals();
+    const n = await restoreSelectedSignals();
+    if (n > 0) showTip(`已恢复上次选择的 ${n} 个信号`);
     return;
   }
   const firstCh = state.channels.find(c => c.messages && c.messages.length);
