@@ -132,6 +132,12 @@
           <label style="padding-top:6px">通道 DBC</label>
           <div id="cfg-channels" class="chan-list"><div class="hint">加载 BLF 后显示通道…</div></div>
         </div>
+        <div class="config-row">
+          <label>显示选项</label>
+          <label class="chk-row" style="display:flex;align-items:center;gap:6px;color:#c9ced6;font-weight:400">
+            <input type="checkbox" id="cfg-jitter-mark" onchange="onJitterMarkToggle()"> 标记抖动峰值
+          </label>
+        </div>
         <div class="config-hint" id="config-tip"></div>
         <div class="drawer-actions">
           <button class="btn primary" onclick="saveConfig()">保存并应用</button>
@@ -171,6 +177,6 @@
   <div id="cursor-tip" class="cursor-tip" style="display:none"></div>
 
 <script src="vendor/uPlot.min.js"></script>
-<script src="js/app.js?v=28"></script>
+<script src="js/app.js?v=29"></script>
 </body>
 </html>

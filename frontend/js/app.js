@@ -382,31 +382,22 @@ function makeUplotOpts() {
         }, { passive: false });
         u.over.addEventListener("mouseleave", hideCursorTip);   // 移出图表 → 隐藏 tooltip
       }],
-      // 抖动峰值时间点 → 竖直虚线标记(顶部小三角)
+      // 抖动峰值时间点 → 时间轴顶部三角标记(受配置开关控制)
       draw: [(u) => {
+        if (!showJitterMarks()) return;
         if (!state.jitterMarks || !state.jitterMarks.length) return;
         const ctx = u.ctx;
         ctx.save();
-        ctx.setLineDash([4, 3]);
-        ctx.lineWidth = 1;
         state.jitterMarks.forEach(m => {
           const px = u.valToPos(m.t, "x", true);
           if (px == null || !isFinite(px)) return;
-          ctx.strokeStyle = m.color;
-          ctx.globalAlpha = 0.8;
-          ctx.beginPath();
-          ctx.moveTo(px, 0);
-          ctx.lineTo(px, u.bbox.height);
-          ctx.stroke();
-          // 顶部小三角
-          ctx.setLineDash([]);
           ctx.fillStyle = m.color;
+          ctx.globalAlpha = 0.9;
           ctx.beginPath();
           ctx.moveTo(px - 4, 0);
           ctx.lineTo(px + 4, 0);
           ctx.lineTo(px, -7);
           ctx.fill();
-          ctx.setLineDash([4, 3]);
         });
         ctx.globalAlpha = 1;
         ctx.restore();
@@ -416,6 +407,16 @@ function makeUplotOpts() {
 }
 
 /* ---------- 配置抽屉 ---------- */
+/* 抖动峰值标记开关(localStorage 持久化,默认开) */
+function showJitterMarks() {
+  return localStorage.getItem("jitterMarks") !== "0";
+}
+function onJitterMarkToggle() {
+  localStorage.setItem("jitterMarks",
+    document.getElementById("cfg-jitter-mark").checked ? "1" : "0");
+  if (state.uplot) state.uplot.redraw();
+}
+
 async function toggleConfigDrawer() {
   const drawer = document.getElementById("config-drawer");
   const opening = !drawer.classList.contains("open");
@@ -475,6 +476,7 @@ async function fillConfig() {
     .filter(f => f.kind === ".blf")
     .map(f => `<option value="${f.name}">${f.name}</option>`).join("");
   blfSel.value = cfg.blf || state.blf || "";
+  document.getElementById("cfg-jitter-mark").checked = showJitterMarks();   // 显示开关状态
   await refreshBlfViews(files);
   document.getElementById("config-tip").textContent = "";
 }
