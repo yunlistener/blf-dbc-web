@@ -534,7 +534,14 @@ function createPlotChart(p) {
           bodyColor: "#e2e8f0", borderColor: "#3a4150", borderWidth: 1,
           callbacks: {
             title: items => (items && items[0] ? items[0].parsed.x.toFixed(3) + " s" : ""),
-            label: item => `${item.dataset.label}: ${fmtVal(item.parsed.y)}`,
+            label: item => {
+              const ds = item.dataset;
+              if (ds && ds.choices) {   // 值表信号:显示 名称(值)
+                const c = ds.choices[String(item.parsed.y)];
+                return `${ds.label}: ${c && c.name ? c.name : ""}(${item.parsed.y})`;
+              }
+              return `${ds.label}: ${fmtVal(item.parsed.y)}`;
+            },
           },
         },
       },
@@ -600,15 +607,23 @@ function createPlotChart(p) {
   return chart;
 }
 
-/* 缩放/平移应用:全窗口同步(播放中由 draw 固定,禁止) */
+/* 缩放/平移应用:全窗口同步(播放中由 draw 固定,禁止)。x 范围钳制 [0, 时长] 防负值 */
 function applyXRange(range, src) {
   if (playState.playing) return;
+  const dur = (state.stats && state.stats.duration_s) ? state.stats.duration_s : 46.1;
+  let lo = Math.max(0, range.min);
+  let hi = Math.min(dur, range.max);
+  if (hi - lo < MIN_WINDOW_S) {   // 限窗兜底(钳制后跨度不足则对齐)
+    if (lo === 0) hi = Math.min(dur, MIN_WINDOW_S);
+    else if (hi >= dur) lo = Math.max(0, dur - MIN_WINDOW_S);
+    else { hi = lo + MIN_WINDOW_S; }
+  }
   syncingX = true;
-  state.xRange = { min: range.min, max: range.max };
+  state.xRange = { min: lo, max: hi };
   state.plots.forEach(p => {
     if (!p.chart) return;
-    p.chart.options.scales.x.min = range.min;
-    p.chart.options.scales.x.max = range.max;
+    p.chart.options.scales.x.min = lo;
+    p.chart.options.scales.x.max = hi;
     p.chart.update("none");
   });
   syncingX = false;
@@ -636,6 +651,7 @@ function updateSeriesData(p) {
     ds.push({
       label: s.signal,
       data,
+      choices: s.choices || null,          // 值表信号:tooltip 显示名称
       borderColor: s.color,
       backgroundColor: s.color,
       borderWidth: s.choices ? 1 : 2,

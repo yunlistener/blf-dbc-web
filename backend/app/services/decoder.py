@@ -6,6 +6,12 @@ from typing import Optional
 from app.services.blf_cache import get_frames
 
 
+def to_plain(v):
+    """值表信号统一转换:cantools NamedSignalValue → 纯数值。
+    所有解码路径(静态/播放)必须走此函数,防止 JSON 序列化崩溃/格式不一致。"""
+    return v.value if hasattr(v, "value") else v
+
+
 def decode_signal(path, db, frame_id: int, signal_name: str,
                   start: Optional[float] = None, end: Optional[float] = None,
                   max_points: Optional[int] = None,
@@ -21,7 +27,7 @@ def decode_signal(path, db, frame_id: int, signal_name: str,
             continue
         if signal_name in decoded:
             times.append(_ts)
-            values.append(decoded[signal_name])
+            values.append(to_plain(decoded[signal_name]))
 
     # 均匀降采样,控制返回体积
     if max_points and len(times) > max_points > 0:

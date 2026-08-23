@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from app.services.frame_source import FrameSource
+from app.services.decoder import to_plain
 
 
 @dataclass
@@ -75,11 +76,8 @@ class PlaybackEngine:
                 continue
             for name, _dbc in sub_list:
                 if name in decoded:
-                    val = decoded[name]
-                    # ⚠️ 值表信号:cantools 返回 NamedSignalValue 对象(非数字)→ JSON 序列化崩溃
-                    # (静态 decode 接口已处理,播放路径漏了 → pump 发送异常退出 → 播放停)
-                    if hasattr(val, "value"):
-                        val = val.value
+                    # 值表信号统一转数值(to_plain,与静态 decode 一致,防 JSON 崩溃)
+                    val = to_plain(decoded[name])
                     key = f"{f.frame_id}|{f.channel}|{name}"
                     sig_data[key]["times"].append(round(f.ts, 6))
                     sig_data[key]["values"].append(val)
