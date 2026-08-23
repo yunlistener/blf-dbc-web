@@ -18,7 +18,7 @@ const state = {
   dbc: null,
   stats: null,
   signals: [],       // 已选信号 [{frame_id, signal, unit, color, slot, data, channel, dbc, plotId}]
-  plots: [],         // 示波器 [{id, el, canvasEl, uplot, sigs: [...]}]
+  plots: [],         // 示波器 [{id, el, canvasEl, chart, series, sigs: [...]}]
   plotIds: [],       // 示波器 id 有序列表(含空示波器)
   plotSeq: 1,        // 下一个示波器 ID
   xRange: null,      // 时间轴同步范围(缩放后 {min, max});null = 自动
@@ -29,7 +29,6 @@ const state = {
   lastCursorT: null, // 最后光标时刻(相对秒,信号行 tooltip 显示用)
   jitterMarks: [],   // [{t, color}] 抖动峰值时间点(相对秒),示波器 x 轴标记
   anchorT: null,     // 测量锚点时间(相对秒);点击设置,再点清除
-  syncLines: {},     // 光标同步竖线: {plotId: 像素x} 每窗口一条(draw hook 绘制)
 };
 
 function showTip(msg) { document.getElementById("st-tip").textContent = msg; }
@@ -171,64 +170,7 @@ function showCursorTipAt(x, y, html) {
   cursorTip.style.top = Math.max(8, ty) + "px";
 }
 
-/* 光标同步:鼠标在某示波器上移动时,其他示波器显示垂直虚线跟随(CANoe 式)。
-   线由 draw hook 统一绘制(0→绘图区底,保证到头到底),不用 uPlot 自带光标 */
-let syncingCursor = false;
-function syncCursor(u, x, y) {
-  if (syncingCursor) return;
-  syncingCursor = true;
-  const tv = u.posToVal(x, "x");          // 光标处的 x 值(时间)
-  state.plots.forEach(p => {
-    if (!p.uplot) return;
-    const px = (p.uplot === u) ? u.valToPos(tv, "x", true) : p.uplot.valToPos(tv, "x", true);
-    state.syncLines[p.id] = px;           // 记录每窗口竖线像素位置(物理像素)
-  });
-  state.plots.forEach(p => { if (p.uplot) p.uplot.redraw(); });
-  syncingCursor = false;
-}
-/* 鼠标离开某示波器 → 全部同步线清除 */
-function hideSyncedCursor() {
-  if (Object.keys(state.syncLines).length === 0) return;
-  state.syncLines = {};
-  state.plots.forEach(p => { if (p.uplot) p.uplot.redraw(); });
-}
-
-/* 更新已选信号列的值(不弹 tooltip) */
-function updateSigVals(u, x) {
-  const idx = u.posToIdx(x);
-  const p = state.plots.find(pp => pp.uplot === u);
-  if (!p) return;
-  p.sigs.forEach((s, i) => {
-    const v = u.data[i + 1] ? u.data[i + 1][idx] : null;
-    const valEl = document.getElementById(`sigval-${s.slot}`);
-    if (valEl) valEl.textContent = fmtSigValUnit(s, v);
-  });
-}
-
-/* 光标移动:更新信号列值 + 显示 tooltip(时间 + 本示波器信号值) */
-function onCursorMove(u, x, y) {
-  updateSigVals(u, x);
-  const t = u.posToVal(x, "x");
-  state.lastCursorT = t;   // 记录最后光标时刻(信号行 tooltip 用)
-  const idx = u.posToIdx(x);
-  const p = state.plots.find(pp => pp.uplot === u);
-  const rows = [`<div class="tip-row">时间 <b>${t.toFixed(3)} s</b></div>`];
-  // 双点测量:锚点存在时显示 Δt 与频率
-  if (state.anchorT != null) {
-    const dt = t - state.anchorT;
-    rows.push(`<div class="tip-row" style="color:#ffd75e">锚点 ${state.anchorT.toFixed(3)}s · Δ <b>${dt >= 0 ? "+" : ""}${dt.toFixed(3)} s</b>` +
-      (dt !== 0 ? ` (${(1 / Math.abs(dt)).toFixed(2)} Hz)` : "") + `</div>`);
-  }
-  if (p) p.sigs.forEach((s, i) => {
-    const v = u.data[i + 1] ? u.data[i + 1][idx] : null;
-    rows.push(`<div class="tip-row"><span class="dot" style="background:${s.color}"></span>` +
-      `${s.signal}: <b>${fmtSigVal(s, v)}</b><span class="u">${s.unit || ""}</span>${ecuTagHtml(s)}</div>`);
-  });
-  // x/y 是 bbox 内 CSS 坐标 → 转页面坐标(bbox 是物理像素,除以 pxRatio)
-  const rect = u.over.getBoundingClientRect();
-  const pxr = uPlot.pxRatio || 1;
-  showCursorTipAt(rect.left + u.bbox.left / pxr + x, rect.top + u.bbox.top / pxr + y, rows.join(""));
-}
+/* 光标同步/读数已由 LWC 渲染层(onCrosshair)实现,旧 uPlot 版本已删除 */
 
 /* 发送 ECU 的彩色 tag HTML(信号所属报文的第一发送者) */
 function ecuTagHtml(s) {
@@ -375,7 +317,7 @@ function draw() {
   showPlaybar(state.signals.length > 0);   // 有信号才显示播放控制栏
   renderSigSidebar();   // 左侧已选信号列(含示波器分配下拉)
   if (!state.signals.length) {
-    state.plots.forEach(p => { if (p.uplot) p.uplot.destroy(); p.el.remove(); });
+    state.plots.forEach(p => { if (p.chart) p.chart.remove(); p.el.remove(); });
     state.plots = [];
     hideCursorTip();
     return;
@@ -390,7 +332,7 @@ function syncPlots() {
   const keep = new Set(ids);
   // 销毁消失的示波器
   state.plots = state.plots.filter(p => {
-    if (!keep.has(p.id)) { if (p.uplot) p.uplot.destroy(); p.el.remove(); return false; }
+    if (!keep.has(p.id)) { if (p.chart) p.chart.remove(); p.el.remove(); return false; }
     return true;
   });
   // 创建缺失的示波器容器
@@ -406,7 +348,7 @@ function syncPlots() {
       canvasEl.className = "plot-canvas";
       el.appendChild(canvasEl);
       wrap.appendChild(el);
-      p = { id, el, canvasEl, uplot: null, title };
+      p = { id, el, canvasEl, chart: null, series: {}, title };
       state.plots.push(p);
     }
     p.sigs = state.signals.filter(s => s.plotId === id);
@@ -433,6 +375,143 @@ function removePlot() {
 }
 
 /* 单个示波器的数据与实例 */
+/* ============ Lightweight Charts 渲染层(v94,替代 uPlot) ============
+   独立时间轴:每信号自己的 series(方案 A 原生支持,无桶对齐);
+   共享 y 轴:priceScaleId 统一 'left'(LWC 自动聚合全部 series 范围);
+   限窗:MIN_WINDOW_MS 最小缩放窗口,控制同屏点数 */
+const MIN_WINDOW_MS = 500;      // 最小缩放窗口 0.5s(100Hz → 50 点/信号)
+let syncingX = false;
+let clamping = false;
+
+/* 创建 LWC 图表(每个示波器窗口一个实例) */
+function createLwcChart(p) {
+  const el = p.canvasEl;
+  el.innerHTML = "";
+  // overlay:锚点红线 + 抖动标记(绝对定位,不挡交互)
+  const anchorEl = document.createElement("div");
+  anchorEl.className = "lwc-anchor";
+  el.appendChild(anchorEl);
+  p.anchorEl = anchorEl;
+  const holder = document.createElement("div");
+  holder.className = "lwc-holder";
+  el.appendChild(holder);
+  p.holder = holder;
+  const chart = LightweightCharts.createChart(holder, {
+    width: Math.max(200, el.clientWidth - 8),
+    height: Math.max(100, el.clientHeight - 4),
+    layout: { background: { color: "transparent" }, textColor: "#8a93a3", fontFamily: "ui-monospace, Menlo, monospace", fontSize: 11 },
+    grid: { vertLines: { color: "#242830" }, horzLines: { color: "#242830" } },
+    rightPriceScale: { visible: false },
+    leftPriceScale: { visible: true, borderColor: "#3a4150" },
+    timeScale: { borderColor: "#3a4150", timeVisible: false, secondsVisible: true, rightOffset: 2 },
+    crosshair: {
+      vertLine: { color: "#7dd3fc", width: 1, style: LightweightCharts.LineStyle.Dashed, labelVisible: false },
+      horzLine: { visible: false },   // 只竖线
+    },
+    localization: { timeFormatter: ms => (ms / 1000).toFixed(2) + "s" },
+  });
+  p.chart = chart;
+  p.series = {};    // slot → LineSeries
+  // 缩放同步 + 最小窗口限制
+  chart.timeScale().subscribeVisibleRangeChange(range => {
+    if (!range || syncingX || clamping) return;
+    const span = range.to - range.from;
+    if (span < MIN_WINDOW_MS) {        // 限窗:不允许缩到 < 0.5s
+      clamping = true;
+      chart.timeScale().setVisibleRange({ from: range.from, to: range.from + MIN_WINDOW_MS });
+      clamping = false;
+      return;
+    }
+    syncXRanges(chart, range);
+  });
+  // 点击设/清锚点
+  holder.addEventListener("click", e => {
+    const rect = holder.getBoundingClientRect();
+    const tMs = chart.timeScale().coordinateToTime(e.clientX - rect.left);
+    if (tMs == null) return;
+    state.anchorT = (state.anchorT == null) ? tMs / 1000 : null;
+    renderOverlays();
+  });
+  // 移出 → 隐藏 tooltip + 清其他窗口光标
+  holder.addEventListener("mouseleave", () => {
+    hideCursorTip();
+    state.plots.forEach(pp => {
+      if (pp.chart && pp.chart !== chart) pp.chart.clearCrosshairPosition();
+    });
+  });
+  return chart;
+}
+
+/* 缩放同步:某窗口可见范围变化 → 广播所有窗口(时间轴全同步) */
+function syncXRanges(src, range) {
+  if (syncingX) return;
+  syncingX = true;
+  state.xRange = { min: range.from / 1000, max: range.to / 1000 };
+  state.plots.forEach(p => {
+    if (p.chart && p.chart !== src) p.chart.timeScale().setVisibleRange({ from: range.from, to: range.to });
+  });
+  syncingX = false;
+  renderOverlays();
+}
+
+/* overlay 重绘:锚点红线 + 抖动峰值三角(所有窗口) */
+function renderOverlays() {
+  state.plots.forEach(p => {
+    const el = p.anchorEl;
+    if (!el || !p.chart) return;
+    el.innerHTML = "";
+    if (state.anchorT != null) {
+      const px = p.chart.timeScale().timeToCoordinate(state.anchorT * 1000);
+      if (px != null) el.innerHTML += `<div class="lwc-anchor-line" style="left:${px}px"></div>`;
+    }
+    if (showJitterMarks() && state.jitterMarks && state.jitterMarks.length) {
+      const names = new Set(p.sigs.map(s => s.signal));
+      state.jitterMarks.forEach(m => {
+        if (!names.has(m.signal)) return;
+        const px = p.chart.timeScale().timeToCoordinate(m.t * 1000);
+        if (px != null) el.innerHTML += `<div class="lwc-jitter" style="left:${px}px;border-top-color:${m.color}"></div>`;
+      });
+    }
+  });
+}
+
+/* 单窗口数据与 series 同步(信号增删/数据更新) */
+function updateSeriesData(p) {
+  const sigs = p.sigs;
+  const kept = new Set(sigs.map(s => s.slot));
+  for (const slot in p.series) {
+    if (!kept.has(Number(slot))) { p.chart.removeSeries(p.series[slot]); delete p.series[slot]; }
+  }
+  sigs.forEach(s => {
+    let ser = p.series[s.slot];
+    if (!ser) {
+      ser = p.chart.addLineSeries({
+        color: s.color,
+        lineWidth: s.choices ? 1 : 2,
+        priceScaleId: "left",                  // 同窗共享 y 轴(LWC 自动聚合范围)
+        crosshairMarkerVisible: !!s.choices,   // 值表信号显示采样点标记
+        priceLineVisible: false,
+        lastValueVisible: false,
+      });
+      ser.subscribeCrosshairMove(param => onCrosshair(p, param));
+      p.series[s.slot] = ser;
+    }
+    const n = s.data.times.length;
+    if (s._dlen === n && s._dplot === p.id) return;   // 数据未变跳过
+    s._dlen = n; s._dplot = p.id;
+    const data = [];
+    const t = s.data.times, v = s.data.values;
+    for (let i = 0; i < n; i++) {
+      const raw = v[i];
+      const val = (raw != null && typeof raw === "object" && "value" in raw) ? raw.value : raw;
+      if (val == null) continue;
+      data.push({ time: Math.round(t[i] * 1000), value: val });   // 相对秒 → 整数毫秒
+    }
+    ser.setData(data);
+  });
+}
+
+/* 单个示波器的数据与实例(LWC 版) */
 function updatePlotData(p) {
   const sigs = p.sigs;
   // 标题:示波器号 + 色点 + 信号名(带删除 ✕)
@@ -441,280 +520,65 @@ function updatePlotData(p) {
     (sigs.length
       ? sigs.map(s => `<span class="pt-dot" style="background:${s.color}"></span><span>${s.signal}${s.unit ? " (" + s.unit + ")" : ""}</span><span class="pt-del" onclick="removeSignal(${s.slot})" title="从示波器移除 ${s.signal}">✕</span>`).join("")
       : `<span style="color:#5c6472">(空)点 [ + 信号 ] 添加,或点 [+] 增空示波器</span>`);
-  // 空示波器:不创建 uPlot
+  // 空示波器:不创建图表
   if (!sigs.length) {
-    if (p.uplot) { p.uplot.destroy(); p.uplot = null; }
+    if (p.chart) { p.chart.remove(); p.chart = null; p.series = {}; }
     p.canvasEl.innerHTML = "";
     return;
   }
-  // 数据构建(列格式 + 时间桶对齐):uPlot 1.6 仅支持列格式(共享 x),
-  // 嵌套 [t,v] 格式不兼容(实测全空白)。同窗信号采样时刻浮点不重合时,
-  // 直接并集 → per 数组 null 交错 → 折线断裂成点阵。把时间戳量化到
-  // 自适应桶(信号中位周期的一半,上限 5ms):相位差 < 桶宽 → 同桶 →
-  // 并集不翻倍、per 几乎无 null → 连续线。桶宽内采样点不增(同信号
-  // 周期 > 桶宽),残余 null 极少,兜底前向填充的增点可忽略。
-  let minPeriod = Infinity;
-  for (const s of sigs) {
-    const t = s.data.times;
-    if (t.length < 2) continue;
-    const ds = [];
-    for (let i = 1; i < t.length; i++) ds.push(t[i] - t[i - 1]);
-    ds.sort((a, b) => a - b);
-    const md = ds[ds.length >> 1];
-    if (md > 0 && md < minPeriod) minPeriod = md;
-  }
-  const BUCKET = (minPeriod === Infinity) ? 0.001 : Math.min(0.005, minPeriod / 2);
-  const bk = t => Math.round(t / BUCKET) * BUCKET;
-  const xSet = new Set();
-  for (const s of sigs) for (const t of s.data.times) xSet.add(bk(t));
-  const x = Array.from(xSet).sort((a, b) => a - b);
-  const per = {};
-  sigs.forEach((s, i) => {
-    const v = new Array(x.length).fill(null);
-    const t = s.data.times;
-    let j = 0;
-    if (s.choices) s._sampleIdx = new Set();
-    for (let k = 0; k < x.length; k++) {
-      while (j < t.length && bk(t[j]) < x[k]) j++;
-      if (j < t.length && bk(t[j]) === x[k]) {
-        const raw = s.data.values[j];
-        v[k] = (raw != null && typeof raw === "object" && "value" in raw) ? raw.value : raw;
-        if (s.choices) s._sampleIdx.add(k);
-      }
-    }
-    // 残余 null 兜底前向填充(桶对齐后极少,值保持到下一采样)
-    let last = null;
-    for (let k = 0; k < v.length; k++) {
-      if (v[k] != null) last = v[k];
-      else if (last != null) v[k] = last;
-    }
-    per[i + 1] = v;
-  });
-  const data = [x, ...sigs.map((_, i) => per[i + 1] || [])];
-  // ⚠️ 信号数变化 → 重建 uPlot:series 配置创建时固定,setData 不能动态加 series,
-  // 同窗信号增多时数据列数 > series 数,多余列不渲染(曲线消失的根因)
-  if (p.uplot && p.seriesCount !== sigs.length) {
-    p.uplot.destroy();
-    p.uplot = null;
-    p.canvasEl.innerHTML = "";
-  }
-  if (!p.uplot) {
-    p.uplot = new uPlot(makePlotOpts(p), data, p.canvasEl);
-    p.seriesCount = sigs.length;
-    // 强制 canvas 物理尺寸 = 逻辑尺寸 × pxRatio(修正创建时 canvas 尺寸异常)
-    const cv = p.canvasEl.querySelector("canvas");
-    if (cv) {
-      cv.width = Math.round(p.uplot.width * uPlot.pxRatio);
-      cv.height = Math.round(p.uplot.height * uPlot.pxRatio);
-      cv.style.width = p.uplot.width + "px";
-      cv.style.height = p.uplot.height + "px";
-    }
-    p.uplot.redraw();
-  } else {
-    p.uplot.setData(data);
-  }
-  // 共享 y 轴:聚合窗口内所有信号的值域 + padding(自动调整最大最小值显示全部信号)
-  let lo = Infinity, hi = -Infinity;
-  sigs.forEach((s, i) => {
-    for (const v of per[i + 1]) {
-      if (v == null) continue;
-      if (v < lo) lo = v;
-      if (v > hi) hi = v;
-    }
-  });
-  if (lo === Infinity) { lo = 0; hi = 1; }
-  else if (lo === hi) { lo -= 1; hi += 1; }          // 恒值信号(如全 0)扩开
-  else { const pad = (hi - lo) * 0.15; lo -= pad; hi += pad; }
-  // ⚠️ y 范围对齐到刻度 step 的倍数:uPlot 刻度从 min 向上取整到 step 倍数,
-  // min 非 step 倍数时负数区无刻度(如 [-37,284] 第一个刻度是 0)→ 向下取整保证负数刻度显示
-  const span = hi - lo;
-  const base = Math.pow(10, Math.floor(Math.log10(Math.max(span / 5, 1e-9))));
-  const m = span / 5 / base;
-  const step = base * (m <= 1 ? 1 : m <= 2 ? 2 : m <= 2.5 ? 2.5 : m <= 5 ? 5 : 10);
-  p.uplot.setScale("y", {
-    min: Math.floor(lo / step) * step,
-    max: Math.ceil(hi / step) * step,
-  });
-  // 显式设置 x 范围:uPlot 对后创建的窗口 x scale 不自动计算(实测 undefined),
-  // 导致 x 轴 _show=false 不绘制 → 这里手动算(数据范围或同步范围)
-  const xData = p.uplot.data[0];
+  if (!p.chart) createLwcChart(p);
+  updateSeriesData(p);
+  // x 范围:固定范围(state.xRange/全量)或自适应
+  const dur = state.stats && state.stats.duration ? state.stats.duration * 1000 : 0;
   if (state.xRange) {
-    p.uplot.setScale("x", state.xRange);
-  } else if (xData && xData.length) {
-    p.uplot.setScale("x", { min: xData[0], max: xData[xData.length - 1] });
+    p.chart.timeScale().setVisibleRange({ from: state.xRange.min * 1000, to: state.xRange.max * 1000 });
+  } else if (dur > 0) {
+    p.chart.timeScale().setVisibleRange({ from: 0, to: dur });
+  } else {
+    p.chart.timeScale().fitContent();
   }
-  // 刷新本示波器信号的已选列值
-  const b = p.uplot.bbox;
-  const pxr = uPlot.pxRatio || 1;
-  updateSigVals(p.uplot, b.width / pxr / 2);
+  renderOverlays();
 }
 
-/* 时间轴同步:任一示波器缩放/平移 → 广播到所有示波器 */
-let syncingX = false;
-function broadcastX(u, min, max) {
-  if (syncingX) return;
-  syncingX = true;
-  state.xRange = { min, max };
-  state.plots.forEach(p => {
-    if (p.uplot && p.uplot !== u) p.uplot.setScale("x", { min, max });
-  });
-  syncingX = false;
-}
-
-/* 单个示波器窗口的 uPlot 配置 */
-function makePlotOpts(p) {
-  const sigs = p.sigs;
-  // 同窗信号共享 y 轴(CANoe 默认):y 范围由 updatePlotData 聚合所有信号值域
-  const series = [{}, ...sigs.map(s => {
-    const conf = {
-      show: true, label: s.signal, stroke: () => s.color,
-      scale: "y", auto: true, width: 2,
-      points: { show: () => false },
-    };
-    // 值表信号:连续阶梯线(离散状态在两次采样间保持,不做斜线插值)。
-    // 稀疏采样(如 0.1s)与密集信号(0.01s)共用时间轴时,值表信号 90%+ 位置是 null,
-    // uPlot 折线在 null 处断线、孤立采样点连不成线 → 整条线不渲染;由 updatePlotData
-    // 前向填充 null(状态保持)后,linear 折线自然呈现阶梯状。
-    if (s.choices) {
-      conf.width = 1.5;
-      // 采样点标记:用 mask 只在真实采样桶位置画点(桶对齐 + 残余填充后
-      // 部分位置是填充值,不应画点)
-      conf.points = {
-        show: () => true,
-        size: 5,
-        paths: (self, sidx, idx0, idx1, _filt) => {
-          const mask = s._sampleIdx;
-          const pts = [];
-          if (mask) for (const k of mask) if (k >= idx0 && k <= idx1) pts.push(k);
-          return uPlot.paths.points()(self, sidx, idx0, idx1, pts.length ? pts : null);
-        },
-      };
+/* 光标移动:tooltip + 已选列值 + 其他窗口竖线同步 */
+function onCrosshair(p, param) {
+  if (!param.time) return;
+  const t = param.time / 1000;
+  state.lastCursorT = t;
+  const rows = [`<div class="tip-row">时间 <b>${t.toFixed(3)} s</b></div>`];
+  if (state.anchorT != null) {
+    const dt = t - state.anchorT;
+    rows.push(`<div class="tip-row" style="color:#ffd75e">锚点 ${state.anchorT.toFixed(3)}s · Δ <b>${dt >= 0 ? "+" : ""}${dt.toFixed(3)} s</b>` +
+      (dt !== 0 ? ` (${(1 / Math.abs(dt)).toFixed(2)} Hz)` : "") + `</div>`);
+  }
+  p.sigs.forEach(s => {
+    const ser = p.series[s.slot];
+    let val = null;
+    if (param.seriesData && ser) {
+      const v = param.seriesData.get(ser);
+      if (v !== undefined) val = v;
     }
-    return conf;
-  })];
-  const scales = { x: { time: false }, y: { auto: true } };
-  const axes = [
-    // x 轴:每个窗口底部都有时间轴(时间同步后刻度一致)
-    // ⚠️ uPlot 1.6 side 枚举:0=上 1=右 2=下 3=左(与我们习惯相反!)
-    { scale: "x", side: 2, show: true, stroke: "#8a93a3", grid: { stroke: "#242830", width: 1 },
-      ticks: { stroke: "#3a4150" }, font: "11px ui-monospace, Menlo",
-      values: (u, vals) => vals.map(v => v.toFixed(2) + "s") },
-    // 左 y 轴(side:3=左):同窗信号共享
-    { scale: "y", side: 3, show: true, stroke: "#8a93a3", grid: { stroke: "#242830", width: 1 },
-      ticks: { stroke: "#3a4150" }, font: "10px ui-monospace, Menlo", size: 46 },
-  ];
-  return {
-    width: Math.max(200, p.canvasEl.clientWidth - 8),
-    height: Math.max(100, p.canvasEl.clientHeight - 4),
-    legend: { show: false },
-    series,
-    scales,
-    axes,
-    cursor: {
-      x: false, y: false,    // uPlot 自带光标线关闭:竖线由 draw hook 统一绘制(到头到底)
-      stroke: "#7dd3fc", width: 1, dash: [4, 3],
-      move: (u, x, y) => {
-        onCursorMove(u, x, y);
-        syncCursor(u, x, y);   // 其他示波器垂直虚线跟随
-        return [x, y];
-      },
-    },
-    select: { show: true, fill: "rgba(77,163,255,.12)", stroke: "#4da3ff" },
-    hooks: {
-      setSelect: [(u) => {
-        const { min, max } = u.select;
-        u.setScale("x", { min, max });
-        broadcastX(u, min, max);
-      }],
-      ready: [(u) => {
-        u.over.addEventListener("mouseleave", () => { hideCursorTip(); hideSyncedCursor(); });
-        u.over.addEventListener("wheel", (e) => {
-          e.preventDefault();
-          const factor = e.deltaY < 0 ? 0.85 : 1.18;
-          const cx = u.posToVal(e.offsetX, "x");
-          u.batch(() => {
-            const { min, max } = u.scales.x;
-            u.setScale("x", {
-              min: cx - (cx - min) * factor,
-              max: cx + (max - cx) * factor,
-            });
-          });
-          const { min, max } = u.scales.x;
-          broadcastX(u, min, max);
-        }, { passive: false });
-        u.over.addEventListener("mouseleave", hideCursorTip);   // 移出图表 → 隐藏 tooltip(同步线清除在 ready 里)
-        // 双点测量:点击设置/清除锚点(黄色三角标记,移动光标显示 Δt)
-        u.over.addEventListener("click", (e) => {
-          state.anchorT = (state.anchorT == null) ? u.posToVal(e.offsetX, "x") : null;
-          state.plots.forEach(pp => { if (pp.uplot) pp.uplot.redraw(); });
-        });
-      }],
-      // 时间轴顶部标记:测量锚点(红)+ 同步竖线(蓝)+ 抖动峰值
-      draw: [(u) => {
-        const ctx = u.ctx;
-        ctx.save();
-        const p = state.plots.find(pp => pp.uplot === u);
-        const H = u.bbox.height;   // 绘图区高度(物理像素)
-        // 锚点:红色竖线贯穿(所有窗口同步)
-        if (state.anchorT != null) {
-          const px = u.valToPos(state.anchorT, "x", true);
-          if (px != null && isFinite(px)) {
-            ctx.strokeStyle = "#ff4d4d";
-            ctx.globalAlpha = 0.8;
-            ctx.lineWidth = 1.5;
-            ctx.setLineDash([4, 3]);
-            ctx.beginPath();
-            ctx.moveTo(px, 0);
-            ctx.lineTo(px, H);
-            ctx.stroke();
-            ctx.setLineDash([]);
-            // 顶部三角(红)
-            ctx.fillStyle = "#ff4d4d";
-            ctx.globalAlpha = 0.95;
-            ctx.beginPath();
-            ctx.moveTo(px - 4, 0);
-            ctx.lineTo(px + 4, 0);
-            ctx.lineTo(px, -7);
-            ctx.fill();
-          }
-        }
-        // 光标同步竖线:浅蓝虚线贯穿(0→绘图区底,到头到底)
-        if (p && state.syncLines[p.id] != null) {
-          const px = state.syncLines[p.id];
-          if (isFinite(px)) {
-            ctx.strokeStyle = "#7dd3fc";
-            ctx.globalAlpha = 0.9;
-            ctx.lineWidth = 1;
-            ctx.setLineDash([4, 3]);
-            ctx.beginPath();
-            ctx.moveTo(px, 0);
-            ctx.lineTo(px, H);
-            ctx.stroke();
-            ctx.setLineDash([]);
-          }
-        }
-        if (showJitterMarks() && state.jitterMarks && state.jitterMarks.length) {
-          const p = state.plots.find(pp => pp.uplot === u);
-          const sigNames = new Set((p ? p.sigs : []).map(s => s.signal));
-          state.jitterMarks.forEach(m => {
-            if (!sigNames.has(m.signal)) return;
-            const px = u.valToPos(m.t, "x", true);
-            if (px == null || !isFinite(px)) return;
-            ctx.fillStyle = m.color;
-            ctx.globalAlpha = 0.9;
-            ctx.beginPath();
-            ctx.moveTo(px - 4, 0);
-            ctx.lineTo(px + 4, 0);
-            ctx.lineTo(px, -7);
-            ctx.fill();
-          });
-        }
-        ctx.globalAlpha = 1;
-        ctx.restore();
-      }],
-    },
-  };
+    const valEl = document.getElementById(`sigval-${s.slot}`);
+    if (valEl) valEl.textContent = fmtSigValUnit(s, val);
+    rows.push(`<div class="tip-row"><span class="dot" style="background:${s.color}"></span>` +
+      `${s.signal}: <b>${fmtSigVal(s, val)}</b><span class="u">${s.unit || ""}</span>${ecuTagHtml(s)}</div>`);
+  });
+  // tooltip 位置(param.point 相对 holder)
+  const rect = p.holder.getBoundingClientRect();
+  const pt = param.point || { x: 0, y: 0 };
+  showCursorTipAt(rect.left + pt.x, rect.top + pt.y, rows.join(""));
+  // 其他窗口竖线跟随(time 决定位置,horzLine 不可见)
+  state.plots.forEach(pp => {
+    if (pp.chart && pp.chart !== p.chart) {
+      const firstSer = pp.series[Object.keys(pp.series)[0]];
+      if (firstSer) pp.chart.setCrosshairPosition(0, param.time, firstSer);
+    }
+  });
 }
+
+/* 更新已选信号列的值(LWC:crosshair 时由 onCrosshair 更新) */
+function updateSigVals(u, x) { /* LWC 版无此路径,保留空实现防引用 */ }
+
 
 /* ---------- 配置抽屉 ---------- */
 /* 抖动峰值标记开关(localStorage 持久化,默认开) */
@@ -724,7 +588,7 @@ function showJitterMarks() {
 function onJitterMarkToggle() {
   localStorage.setItem("jitterMarks",
     document.getElementById("cfg-jitter-mark").checked ? "1" : "0");
-  state.plots.forEach(p => { if (p.uplot) p.uplot.redraw(); });
+  renderOverlays();
 }
 
 async function toggleConfigDrawer() {
@@ -744,19 +608,11 @@ function resizeChart() {
   const wrap = document.getElementById("plot-wrap");
   const w = Math.max(200, wrap.clientWidth - 8);       // 上下排列:窗口横贯全宽
   state.plots.forEach(p => {
-    if (!p.uplot) return;
+    if (!p.chart) return;
     const h = Math.max(80, p.el.clientHeight - 26);    // 减标题高度
-    p.uplot.setSize({ width: w, height: h });
-    // 高 DPI 修正:setSize 后手动同步 canvas 物理尺寸
-    const cv = p.canvasEl.querySelector("canvas");
-    if (cv) {
-      const pxr = uPlot.pxRatio || 1;
-      cv.width = Math.round(w * pxr);
-      cv.height = Math.round(h * pxr);
-      cv.style.width = w + "px";
-      cv.style.height = h + "px";
-    }
+    p.chart.applyOptions({ width: w, height: h });
   });
+  renderOverlays();
 }
 
 function drawerOpen() {
@@ -895,7 +751,7 @@ async function loadFiles() {
 
   // 重置分析状态(文件可能已切换)
   state.signals = [];
-  state.plots.forEach(p => { if (p.uplot) p.uplot.destroy(); });
+  state.plots.forEach(p => { if (p.chart) p.chart.remove(); });
   state.plots = [];
   state.plotIds = [];
   state.plotSeq = 1;
@@ -1311,12 +1167,12 @@ document.getElementById("btn-export").onclick = () => {
     channel: String(s.channel),
   });
   // 缩放区间导出:示波器有缩放时,只导出当前 x 轴范围(时间同步,取任一示波器)
-  const p0 = state.plots.find(x => x.uplot);
+  const p0 = state.plots.find(x => x.chart);
   if (p0) {
-    const sx = p0.uplot.scales.x;
-    if (sx.min != null && sx.max != null) {
-      q.set("start", String(sx.min));
-      q.set("end", String(sx.max));
+    const vr = p0.chart.timeScale().getVisibleRange();
+    if (vr && vr.from != null) {
+      q.set("start", String(vr.from / 1000));
+      q.set("end", String(vr.to / 1000));
     }
   }
   window.open(`/api/blf/${state.blf}/export?${q}`, "_blank");
@@ -1325,11 +1181,13 @@ document.getElementById("btn-export").onclick = () => {
 
 document.getElementById("btn-reset").onclick = () => {
   state.xRange = null;
+  const dur = state.stats && state.stats.duration ? state.stats.duration * 1000 : 0;
   state.plots.forEach(p => {
-    if (!p.uplot) return;
-    const x = p.uplot.data[0];
-    if (x && x.length) p.uplot.setScale("x", { min: x[0], max: x[x.length - 1] });
+    if (!p.chart) return;
+    if (dur > 0) p.chart.timeScale().setVisibleRange({ from: 0, to: dur });
+    else p.chart.timeScale().fitContent();
   });
+  renderOverlays();
 };
 // 用 ResizeObserver 观察图表容器:抽屉/信号树展开动画期间容器宽度逐帧变化,
 // canvas 同步逐帧跟随 → 收缩丝滑无跳变(uPlot setSize 轻量,小数据无压力)
@@ -1412,13 +1270,13 @@ function clearTraceSearch() {
   loadTrace();
 }
 
-/* 按示波器当前缩放区间过滤 Trace(读取 uPlot x 轴范围) */
+/* 按示波器当前缩放区间过滤 Trace(读取 LWC 可见范围) */
 function applyTraceRange() {
-  const p0 = state.plots.find(x => x.uplot);
+  const p0 = state.plots.find(x => x.chart);
   if (!p0) { showTip("请先在示波器上缩放出区间"); return; }
-  const sx = p0.uplot.scales.x;
-  if (sx.min == null || sx.max == null) { showTip("请先在示波器上缩放出区间"); return; }
-  state.trace.range = { start: sx.min, end: sx.max };
+  const vr = p0.chart.timeScale().getVisibleRange();
+  if (!vr || vr.from == null) { showTip("请先在示波器上缩放出区间"); return; }
+  state.trace.range = { start: vr.from / 1000, end: vr.to / 1000 };
   state.trace.offset = 0;
   document.getElementById("trace-range-clear").style.display = "";
   loadTrace();
@@ -1645,8 +1503,8 @@ async function loadSigStats() {
     }
     html += `</tbody></table>`;
     box.innerHTML = html;
-    // 抖动峰值标记已更新 → 重绘示波器
-    state.plots.forEach(p => { if (p.uplot) p.uplot.redraw(); });
+    // 抖动峰值标记已更新 → 重绘示波器 overlay
+    renderOverlays();
   } catch (e) {
     box.innerHTML = `<div class="hint">加载失败: ${e.message}</div>`;
   }
