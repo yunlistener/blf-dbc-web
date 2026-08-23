@@ -232,6 +232,7 @@ function removeSignal(slot) {
   });
   if (state.uplot) state.uplot.setSeries(slot, { show: false });
   draw();
+  if (currentTab() === "sigstats") loadSigStats();
 }
 
 function draw() {
@@ -825,6 +826,8 @@ async function toggleSignal(msg, signal, item, channel) {
   const slot = [1, 2, 3, 4, 5, 6].find(i => !usedSlots.has(i));
   state.signals.push({ frame_id: msg.frame_id, signal, unit, color, slot, data, channel, dbc, choices, comment, senders });
   draw();
+  // 信号统计 tab 已打开时,新选信号要刷新统计
+  if (currentTab() === "sigstats") loadSigStats();
 }
 
 /* ---------- 导出 ---------- */
@@ -1023,6 +1026,11 @@ async function loadBusLoad() {
   } catch (e) {
     box.innerHTML = `<div class="busload-item dim">Bus Load 加载失败: ${e.message}</div>`;
   }
+}
+
+/* 当前底部 tab */
+function currentTab() {
+  return document.querySelector("#tabs .tab.active")?.dataset.tab || "trace";
 }
 
 /* 信号统计 tab:已选信号的数值统计 + 所属报文周期/抖动/丢帧 */
