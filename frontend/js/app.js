@@ -13,6 +13,7 @@ const state = {
   trace: { frameId: null, channel: null, offset: 0, limit: 200 },
   config: {},        // 工程配置(总线/波特率/文件/通道映射)
   channels: [],      // [{channel, frames, dbc, messages}]
+  hasData: null,     // Set<frame_id> 日志中实际出现的报文 ID
 };
 
 function showTip(msg) { document.getElementById("st-tip").textContent = msg; }
@@ -488,6 +489,7 @@ async function loadFiles() {
 
   state.stats = await api(`/api/blf/${state.blf}/stats`);
   state.t0 = state.stats.first_timestamp || 0;   // 绝对时间基准:曲线/读数/表格显示相对时间
+  state.hasData = new Set((state.stats.by_id || []).map(e => e.frame_id));  // 日志中实际出现的报文
   // 构建通道列表:每通道 DBC 只来自通道映射(不自动兜底,未配置即空,由用户指定)
   const chanCfg = state.config.channels || {};
   state.channels = (state.stats.channels || [{ channel: 0, frames: state.stats.total_frames }]).map(c => ({
@@ -569,6 +571,8 @@ async function loadDbcTree() {
         list.style.display = show ? "" : "none";
         mhead.querySelector(".caret").textContent = show ? "▾" : "▸";
       };
+      // 日志中无此报文 → 灰色标记(点击信号时快速提示)
+      if (!state.hasData.has(m.frame_id)) mhead.classList.add("no-data");
       wrap.appendChild(mhead);
 
       const list = document.createElement("div");
@@ -593,16 +597,20 @@ async function loadDbcTree() {
   }
   document.getElementById("tree-hint")?.remove();
 
-  // 自动选中第一个通道的前两个信号(demo 便利)
+  // 自动选中第一个有数据的通道的前两个信号(demo 便利)
   const firstCh = state.channels.find(c => c.messages && c.messages.length);
-  if (firstCh && firstCh.messages.length > 0) {
-    const m0 = firstCh.messages[0];
-    if (m0.signals.length >= 2) {
-      const sigs = document.querySelectorAll(".chan-group .sig-item");
-      toggleSignal(m0, m0.signals[0], sigs[0], firstCh.channel);
-      toggleSignal(m0, m0.signals[1], sigs[1], firstCh.channel);
-    } else if (m0.signals.length > 0) {
-      toggleSignal(m0, m0.signals[0], document.querySelector(".chan-group .sig-item"), firstCh.channel);
+  if (firstCh) {
+    const m0 = firstCh.messages.find(m => state.hasData.has(m.frame_id));
+    const items = Array.from(document.querySelectorAll(".chan-group .sig-item"));
+    const findItem = (sig) => items.find(el =>
+      el.dataset.sig === sig &&
+      el.dataset.ch === String(firstCh.channel) &&
+      el.closest(".msg-item")?.querySelector(".msg-id")?.textContent === m0.frame_id_hex);
+    if (m0 && m0.signals.length >= 2) {
+      toggleSignal(m0, m0.signals[0], findItem(m0.signals[0]), firstCh.channel);
+      toggleSignal(m0, m0.signals[1], findItem(m0.signals[1]), firstCh.channel);
+    } else if (m0 && m0.signals.length > 0) {
+      toggleSignal(m0, m0.signals[0], findItem(m0.signals[0]), firstCh.channel);
     }
   }
 
@@ -722,15 +730,33 @@ async function toggleSignal(msg, signal, item, channel) {
     showTip(`通道 ${channel} 未配置 DBC,请在右侧配置中为该通道选择 DBC 文件`);
     return;
   }
+  // 日志中无此报文 → 快速提示,不进入加载(避免卡在选中态)
+  if (state.hasData && !state.hasData.has(msg.frame_id)) {
+    item.classList.remove("active");
+    showTip(`报文 ${msg.frame_id_hex} 在日志中无数据(该通道未发送),无法画曲线`);
+    return;
+  }
 
-  const detail = await api(`/api/dbc/${dbc}/messages/${msg.frame_id_hex}`);
+  let detail, data;
+  try {
+    detail = await api(`/api/dbc/${dbc}/messages/${msg.frame_id_hex}`);
+    data = await api(`/api/blf/${state.blf}/decode?dbc=${encodeURIComponent(dbc)}` +
+      `&frame_id=${msg.frame_id_hex}&signal=${encodeURIComponent(signal)}&channel=${channel}&max_points=200000`);
+  } catch (e) {
+    item.classList.remove("active");   // 失败回滚选中态,可再次点击
+    showTip(`加载失败: ${e.message}`);
+    return;
+  }
+  if (!data.times || !data.times.length) {
+    item.classList.remove("active");
+    showTip(`报文 ${msg.frame_id_hex} 在日志中无数据(该通道未发送),无法画曲线`);
+    return;
+  }
   const sigDef = detail.signals.find(s => s.name === signal);
   const unit = sigDef?.unit || "";
   // 值表信号:保存 choices 映射 {raw值: {name, value}},读数时显示名称
   const choices = sigDef?.choices || null;
 
-  const data = await api(`/api/blf/${state.blf}/decode?dbc=${encodeURIComponent(dbc)}` +
-    `&frame_id=${msg.frame_id_hex}&signal=${encodeURIComponent(signal)}&channel=${channel}&max_points=200000`);
   // 绝对时间戳 → 相对时间(以日志起始为 0)
   data.times = data.times.map(t => t - state.t0);
   // 槽位分配须与 push 同步完成(避免并发请求拿到相同槽位)

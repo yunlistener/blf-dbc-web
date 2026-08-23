@@ -95,6 +95,9 @@ body {
   user-select: none;
 }
 .msg-head:hover { background: #23262e; }
+/* 日志中无数据的报文:灰色淡化 */
+.msg-head.no-data { opacity: .4; }
+.msg-head.no-data .msg-name { text-decoration: line-through; }
 /* 发送节点标签 */
 .msg-tag {
   flex: none;

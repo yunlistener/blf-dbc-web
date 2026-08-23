@@ -74,7 +74,8 @@ def get_decode(name: str, dbc: Optional[str] = None, frame_id: str = "",
     result = decode_signal(blf_path, db, fid, signal, start, end, max_points,
                            channel=channel)
     if not result["times"]:
-        raise HTTPException(404, f"BLF 中未解码到信号 {signal} 的数据(检查通道/时间区间)")
+        # 日志中无该报文数据(报文在 DBC 里有定义但日志里没发)→ 返回空结果,前端提示
+        result["empty"] = True
     return result
 
 
