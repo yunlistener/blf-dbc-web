@@ -235,6 +235,27 @@ function renderSigSidebar() {
   });
 }
 
+/* 从指定示波器移除信号(该信号若只在此示波器,同步从已选列表移除) */
+function removeSignalFromPlot(plotId, slot) {
+  pausePlayOnSignalChange();   // 播放中移除 → 自动暂停
+  const s = state.signals.find(x => x.slot === slot && x.plotId === plotId);
+  if (!s) return;
+  state.signals = state.signals.filter(x => !(x.slot === slot && x.plotId === plotId));
+  // 该信号在其他示波器还有条目则保留信号树 active
+  const still = state.signals.some(x =>
+    x.frame_id === s.frame_id && x.signal === s.signal && x.channel === s.channel);
+  if (!still) {
+    document.querySelectorAll(".sig-item.active").forEach(el => {
+      if (el.dataset.sig === s.signal && String(el.dataset.ch) === String(s.channel)) {
+        el.classList.remove("active");
+      }
+    });
+  }
+  saveSelectedSignals();   // 持久化
+  draw();                  // 重建:目标窗口信号移除,自动重算 y 范围
+  if (currentTab() === "sigstats") loadSigStats();
+}
+
 /* 从已选列表移除信号 */
 function removeSignal(slot) {
   pausePlayOnSignalChange();   // 播放中移除信号 → 自动暂停
@@ -1614,19 +1635,28 @@ function showPlaybar(show) {
   if (bar) bar.style.display = show ? "" : "none";
 }
 
+let replayQueue = [];   // WS 未就绪时的待发消息(连接建立后 flush)
+
 function connectReplay() {
   if (playState.ws && playState.ws.readyState === 1) return;
   const proto = location.protocol === "https:" ? "wss" : "ws";
   playState.ws = new WebSocket(`${proto}://${location.host}/ws/replay`);
+  playState.ws.onopen = () => {
+    // 连接建立后补发排队消息(config/play),避免"删了再加后播放没反应"
+    replayQueue.forEach(m => playState.ws.send(JSON.stringify(m)));
+    replayQueue = [];
+  };
   playState.ws.onmessage = e => onReplayMsg(JSON.parse(e.data));
   playState.ws.onclose = () => {
     playState.playing = false;
+    playState.ws = null;   // 置空,下次 startPlayback 重新连接
     updatePlayUI();
   };
 }
 
 function sendReplay(msg) {
   if (playState.ws && playState.ws.readyState === 1) playState.ws.send(JSON.stringify(msg));
+  else replayQueue.push(msg);   // 未就绪 → 排队,连接后补发
 }
 
 /* 重置播放累积(清空曲线数据) */
