@@ -29,6 +29,7 @@ const state = {
   lastCursorT: null, // 最后光标时刻(相对秒,信号行 tooltip 显示用)
   jitterMarks: [],   // [{t, color}] 抖动峰值时间点(相对秒),示波器 x 轴标记
   anchorT: null,     // 测量锚点时间(相对秒);点击设置,再点清除
+  playYRange: null,  // 播放时固定 y 轴范围 {min, max}(防数据增长重算导致曲线跳动)
 };
 
 function showTip(msg) { document.getElementById("st-tip").textContent = msg; }
@@ -403,12 +404,14 @@ function createLwcChart(p) {
     grid: { vertLines: { color: "#242830" }, horzLines: { color: "#242830" } },
     rightPriceScale: { visible: false },
     leftPriceScale: { visible: true, borderColor: "#3a4150" },
-    timeScale: { borderColor: "#3a4150", timeVisible: true, secondsVisible: true, rightOffset: 2 },
+    timeScale: { borderColor: "#3a4150", timeVisible: true, secondsVisible: true, rightOffset: 2,
+      // 刻度标签:毫秒数值 → 秒,3 位小数(0.000s / 10.010s / 46.100s)
+      tickMarkFormatter: (time, tickMarkType, locale) => (time / 1000).toFixed(3) + "s" },
     crosshair: {
       vertLine: { color: "#7dd3fc", width: 1, style: LightweightCharts.LineStyle.Dashed, labelVisible: false },
       horzLine: { visible: false },   // 只竖线
     },
-    localization: { timeFormatter: t => (t / 1000).toFixed(2) + "s" },   // time 单位=毫秒 → 显示相对秒
+    localization: { timeFormatter: t => (t / 1000).toFixed(3) + "s" },   // crosshair 时间标签
   });
   p.chart = chart;
   p.series = {};    // slot → LineSeries
@@ -531,6 +534,12 @@ function updatePlotData(p) {
   }
   if (!p.chart) createLwcChart(p);
   updateSeriesData(p);
+  // 播放中:y 轴固定全量范围(后端 signal-stats,防每帧 setData 重算导致曲线跳动)
+  if (playState.playing || state.playYRange) {
+    const ps = p.chart.priceScale("left");
+    ps.applyOptions({ autoScale: false });
+    if (state.playYRange) ps.setVisibleRange(state.playYRange);
+  }
   // x 范围:固定范围(state.xRange/全量)或自适应
   const dur = state.stats && state.stats.duration ? state.stats.duration * 1000 : 0;
   if (state.xRange) {
@@ -1562,6 +1571,31 @@ function resetPlayData() {
   state.signals.forEach(s => { s.data = { times: [], values: [] }; });
 }
 
+/* 播放开始时加载各信号全量 min/max(signal-stats,缓存秒回),固定 y 轴防跳动 */
+async function loadPlayYRange() {
+  try {
+    const ranges = [];
+    for (const s of state.signals) {
+      const st = await api(`/api/blf/${state.blf}/signal-stats?dbc=${encodeURIComponent(s.dbc || "")}` +
+        `&frame_id=0x${s.frame_id.toString(16)}&signal=${encodeURIComponent(s.signal)}&channel=${s.channel}`);
+      if (st.min != null && st.max != null) ranges.push([st.min, st.max]);
+    }
+    if (!ranges.length) return;
+    const lo = Math.min(...ranges.map(r => r[0]));
+    const hi = Math.max(...ranges.map(r => r[1]));
+    if (lo === hi) state.playYRange = { min: lo - 1, max: hi + 1 };
+    else { const pad = (hi - lo) * 0.15; state.playYRange = { min: lo - pad, max: hi + pad }; }
+  } catch (e) { /* 失败则保持 autoScale */ }
+}
+
+/* 播放结束/停止:恢复 y 轴自动缩放 */
+function releasePlayYRange() {
+  state.playYRange = null;
+  state.plots.forEach(p => {
+    if (p.chart) p.chart.priceScale("left").applyOptions({ autoScale: true });
+  });
+}
+
 /* 开始/继续播放:清空累积 → 配置订阅 → 播放 */
 function startPlayback() {
   if (!state.signals.length) { showTip("请先添加信号"); return; }
@@ -1569,6 +1603,7 @@ function startPlayback() {
   cancelAnimationFrame(playRaf);
   playState.renderPending = false;
   state.xRange = null;   // 播放开始时 x 范围由首批数据/state 决定,之后固定
+  loadPlayYRange();      // 后台加载全量 y 范围(播放中固定防跳动)
   if (!playState.ws || playState.ws.readyState !== 1) connectReplay();
   resetPlayData();
   draw();   // 清空曲线
@@ -1591,6 +1626,7 @@ function stopPlayback() {
   state.xRange = null;
   cancelAnimationFrame(playRaf);
   playState.renderPending = false;
+  releasePlayYRange();      // 恢复 y 轴自动缩放
   restoreStaticData();      // 停止 → 恢复静态全量曲线
   draw();
   updatePlayUI();
@@ -1634,6 +1670,7 @@ function onReplayMsg(m) {
     state.xRange = null;      // 结束 → 恢复自动 x 范围
     cancelAnimationFrame(playRaf);
     playState.renderPending = false;
+    releasePlayYRange();      // 恢复 y 轴自动缩放
     restoreStaticData();      // 播放数据覆盖 → 恢复静态全量
     draw();   // 最终渲染全量
     updatePlayUI();
@@ -1700,6 +1737,7 @@ function pausePlayOnSignalChange() {
     playState.playing = false;
     cancelAnimationFrame(playRaf);
     playState.renderPending = false;
+    releasePlayYRange();
     restoreStaticData();
     updatePlayUI();
   }
