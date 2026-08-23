@@ -40,6 +40,22 @@
 
     <!-- 主区:曲线 + 底部面板 -->
     <main id="main">
+      <!-- 播放控制栏(CANoe 式:配置完信号 → 点播放 → 曲线动态显示) -->
+      <div id="playbar" class="playbar" style="display:none">
+        <button id="btn-play" class="pb-btn" onclick="togglePlay()" title="播放/暂停">▶</button>
+        <button id="btn-stop" class="pb-btn" onclick="stopPlayback()" title="停止(回到起点)">⏹</button>
+        <input type="range" id="play-progress" min="0" max="1000" value="0"
+               oninput="seekPlayback(this.value)" title="拖动定位">
+        <span id="play-time" class="pb-time">0.0s</span>
+        <span class="pb-dim">/</span>
+        <span id="play-dur" class="pb-time">0.0s</span>
+        <select id="play-rate" class="pb-rate" onchange="setPlayRate(this.value)" title="回放速率">
+          <option value="0.5">0.5x</option>
+          <option value="1" selected>1x</option>
+          <option value="2">2x</option>
+          <option value="5">5x</option>
+        </select>
+      </div>
       <div id="chart">
         <div id="sig-sidebar"></div>   <!-- 已选信号列 -->
         <div id="sig-resizer" title="拖动调整宽度"></div>

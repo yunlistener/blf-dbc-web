@@ -162,6 +162,27 @@ body {
 #main { flex: 1; display: flex; flex-direction: column; min-width: 0; background: #16181d; }
 #chart { flex: 1; min-height: 200px; padding: 8px; display: flex; min-width: 0; overflow: hidden; }
 
+/* 播放控制栏(CANoe 式回放) */
+#playbar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 12px; border-bottom: 1px solid #232730;
+  background: #191c22; flex: none;
+}
+.pb-btn {
+  background: #23262e; color: #e8ecf2; border: 1px solid #32373f;
+  border-radius: 4px; padding: 2px 12px; font-size: 13px; cursor: pointer;
+  line-height: 1.4;
+}
+.pb-btn:hover { background: #2c303a; }
+.pb-btn.playing { background: rgba(77,163,255,.15); border-color: #4da3ff; color: #4da3ff; }
+#play-progress { flex: 1; accent-color: #4da3ff; height: 4px; cursor: pointer; }
+.pb-time { font-size: 11px; font-family: ui-monospace, Menlo; color: #c9d2e0; min-width: 40px; }
+.pb-dim { color: #5c6472; font-size: 11px; }
+.pb-rate {
+  background: #23262e; color: #c9d2e0; border: 1px solid #32373f;
+  border-radius: 4px; font-size: 11px; padding: 1px 4px;
+}
+
 /* 已选信号列(曲线图左侧):flex:none + min-width 保证宽度不因信号树/抽屉伸缩而收缩 */
 #sig-sidebar {
   width: 150px; flex: none; min-width: 80px;

@@ -262,6 +262,7 @@ function renderSigSidebar() {
 
 /* 从已选列表移除信号 */
 function removeSignal(slot) {
+  pausePlayOnSignalChange();   // 播放中移除信号 → 自动暂停
   const s = state.signals.find(x => x.slot === slot);
   if (!s) return;
   state.signals = state.signals.filter(x => x !== s);
@@ -282,6 +283,7 @@ function removeSignal(slot) {
 
 /* 清空所有信号(含空示波器) */
 function clearSignals() {
+  pausePlayOnSignalChange();   // 播放中清空 → 自动暂停
   if (!state.signals.length) return;
   state.signals = [];
   state.plotIds = [];
@@ -347,6 +349,7 @@ async function restoreSelectedSignals() {
 
 /* ============ 多示波器示波器(CANoe 式) ============ */
 function draw() {
+  showPlaybar(state.signals.length > 0);   // 有信号才显示播放控制栏
   renderSigSidebar();   // 左侧已选信号列(含示波器分配下拉)
   if (!state.signals.length) {
     state.plots.forEach(p => { if (p.uplot) p.uplot.destroy(); p.el.remove(); });
@@ -1066,6 +1069,7 @@ function sortTree() {
 
 /* 核心:添加信号到指定示波器(plotId 为 null 时自动复用空示波器) */
 async function addSignal(msg, signal, channel, plotId) {
+  pausePlayOnSignalChange();   // 播放中加信号 → 自动暂停
   // 先确定示波器:指定则用;未指定则复用空示波器,无空才新建
   let pid = plotId;
   if (pid == null) {
@@ -1212,6 +1216,7 @@ function renderAddSignalList(q) {
 
 /* 信号树点击切换:三元组增删(同信号在多示波器时点击树 = 移除所有该信号) */
 async function toggleSignal(msg, signal, item, channel) {
+  pausePlayOnSignalChange();   // 播放中改信号 → 自动暂停
   const dups = state.signals.filter(s => s.signal === signal && s.frame_id === msg.frame_id && s.channel === channel);
   if (dups.length) {
     state.signals = state.signals.filter(s => !(s.signal === signal && s.frame_id === msg.frame_id && s.channel === channel));
@@ -1587,6 +1592,154 @@ document.getElementById("cfg-blf").addEventListener("change", () => refreshBlfVi
 async function init() {
   try { state.config = await api("/api/config"); } catch (e) { state.config = {}; }
   await loadFiles();
+}
+
+/* ============ 播放模式(CANoe 式动态回放:后端逐帧解析推送) ============ */
+const playState = {
+  ws: null, playing: false, rate: 1.0, t: 0.0, dur: 0.0,
+  data: {},            // key(frame_id|channel|signal) -> {times, values} 累积
+  renderPending: false,
+};
+
+function showPlaybar(show) {
+  const bar = document.getElementById("playbar");
+  if (bar) bar.style.display = show ? "" : "none";
+}
+
+function connectReplay() {
+  if (playState.ws && playState.ws.readyState === 1) return;
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  playState.ws = new WebSocket(`${proto}://${location.host}/ws/replay`);
+  playState.ws.onmessage = e => onReplayMsg(JSON.parse(e.data));
+  playState.ws.onclose = () => {
+    playState.playing = false;
+    updatePlayUI();
+  };
+}
+
+function sendReplay(msg) {
+  if (playState.ws && playState.ws.readyState === 1) playState.ws.send(JSON.stringify(msg));
+}
+
+/* 重置播放累积(清空曲线数据) */
+function resetPlayData() {
+  playState.data = {};
+  state.signals.forEach(s => { s.data = { times: [], values: [] }; });
+}
+
+/* 开始/继续播放:清空累积 → 配置订阅 → 播放 */
+function startPlayback() {
+  if (!state.signals.length) { showTip("请先添加信号"); return; }
+  if (!state.blf) { showTip("请先选择 BLF 文件"); return; }
+  if (!playState.ws || playState.ws.readyState !== 1) connectReplay();
+  resetPlayData();
+  draw();   // 清空曲线
+  const subs = state.signals.map(s => ({
+    frame_id: s.frame_id, channel: s.channel, signal: s.signal, dbc: s.dbc || "",
+  }));
+  sendReplay({ type: "config", blf: state.blf, signals: subs });
+  sendReplay({ type: "play", rate: playState.rate });
+}
+
+function togglePlay() {
+  if (playState.playing) sendReplay({ type: "pause" });
+  else startPlayback();
+}
+
+function stopPlayback() {
+  sendReplay({ type: "stop" });
+  playState.t = 0;
+  resetPlayData();
+  draw();
+  updatePlayUI();
+}
+
+/* 进度条拖动定位 */
+function seekPlayback(pct) {
+  const t = playState.dur > 0 ? (pct / 1000) * playState.dur : 0;
+  playState.t = t;
+  resetPlayData();
+  draw();
+  sendReplay({ type: "seek", t });
+  updatePlayUI();
+}
+
+function setPlayRate(r) {
+  playState.rate = parseFloat(r);
+  if (playState.playing) sendReplay({ type: "play", rate: playState.rate });   // 播放中变速
+}
+
+/* 收到后端推送(帧批次 → 累积 → 节流渲染) */
+function onReplayMsg(m) {
+  if (m.type === "batch") {
+    for (const [key, d] of Object.entries(m.signals)) {
+      if (!playState.data[key]) playState.data[key] = { times: [], values: [] };
+      playState.data[key].times.push(...d.times);
+      playState.data[key].values.push(...d.values);
+    }
+    playState.t = m.t1;
+    schedulePlayRender();
+  } else if (m.type === "progress") {
+    playState.t = m.t;
+    updateProgressUI();
+  } else if (m.type === "state") {
+    playState.playing = m.playing;
+    playState.rate = m.rate;
+    playState.dur = m.dur;
+    updatePlayUI();
+  } else if (m.type === "end") {
+    playState.playing = false;
+    applyPlayData();   // 最终渲染全量
+    updatePlayUI();
+    showTip("回放结束");
+  }
+}
+
+/* 渲染节流:约每 200ms 把累积数据应用到示波器(曲线随时间增长) */
+function schedulePlayRender() {
+  if (playState.renderPending) return;
+  playState.renderPending = true;
+  setTimeout(() => {
+    playState.renderPending = false;
+    applyPlayData();
+  }, 200);
+}
+
+/* StreamRenderer:累积数据 → state.signals → draw(增量曲线) */
+function applyPlayData() {
+  for (const s of state.signals) {
+    const key = `${s.frame_id}|${s.channel}|${s.signal}`;
+    const d = playState.data[key];
+    if (d && d.times.length) s.data = { times: d.times, values: d.values };
+  }
+  draw();
+}
+
+function updatePlayUI() {
+  const btn = document.getElementById("btn-play");
+  if (btn) {
+    btn.textContent = playState.playing ? "⏸" : "▶";
+    btn.classList.toggle("playing", playState.playing);
+  }
+  updateProgressUI();
+}
+
+function updateProgressUI() {
+  const prog = document.getElementById("play-progress");
+  const tEl = document.getElementById("play-time");
+  const dEl = document.getElementById("play-dur");
+  if (prog && playState.dur > 0) prog.value = Math.min(1000, playState.t / playState.dur * 1000);
+  if (tEl) tEl.textContent = playState.t.toFixed(1) + "s";
+  if (dEl && playState.dur > 0) dEl.textContent = playState.dur.toFixed(1) + "s";
+}
+
+/* 播放中信号集变化 → 自动暂停(避免数据不同步) */
+function pausePlayOnSignalChange() {
+  if (playState.playing) {
+    sendReplay({ type: "pause" });
+    playState.playing = false;
+    updatePlayUI();
+  }
 }
 
 init().catch(e => {
