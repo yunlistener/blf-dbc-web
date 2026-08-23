@@ -605,6 +605,55 @@ async function loadDbcTree() {
   onTraceMsgChange();
 }
 
+/* 信号树搜索:按报文 ID(hex)/报文名/信号名实时过滤 */
+function filterTree(q) {
+  q = (q || "").trim().toLowerCase();
+  const qHex = q.replace(/^0x/, "");
+  document.querySelectorAll(".chan-group").forEach(g => {
+    let groupVisible = false;
+    g.querySelectorAll(".msg-item").forEach(item => {
+      const head = item.querySelector(".msg-head");
+      const idTxt = head.querySelector(".msg-id").textContent.toLowerCase();     // "0x21"
+      const nameTxt = head.querySelector(".msg-name").textContent.toLowerCase();
+      const sigList = item.querySelector(".sig-list");
+      const caret = head.querySelector(".caret");
+
+      let msgMatch = false;
+      let sigMatch = false;
+      if (!q) {
+        msgMatch = true;
+      } else {
+        msgMatch = idTxt.includes(q) || idTxt.replace("0x", "").includes(qHex) || nameTxt.includes(q);
+        // 信号匹配:显示命中的信号项
+        sigList.querySelectorAll(".sig-item").forEach(si => {
+          const sn = si.querySelector(".sig-name").textContent.toLowerCase();
+          const hit = sn.includes(q);
+          si.style.display = hit ? "" : "none";
+          if (hit) sigMatch = true;
+        });
+      }
+
+      const show = !q || msgMatch || sigMatch;
+      item.style.display = show ? "" : "none";
+      if (show) {
+        if (q && sigMatch && !msgMatch) {
+          // 只有信号命中 → 展开信号列表展示匹配项
+          sigList.style.display = "";
+          caret.textContent = "▾";
+        } else if (!q) {
+          // 清空搜索 → 恢复默认折叠
+          sigList.style.display = "none";
+          caret.textContent = "▸";
+        }
+        groupVisible = true;
+      }
+    });
+    g.style.display = groupVisible ? "" : "none";
+    g.querySelector(".chan-body").style.display = groupVisible ? "" : "none";
+    g.querySelector(".chan-head .caret").textContent = groupVisible ? "▾" : "▸";
+  });
+}
+
 async function toggleSignal(msg, signal, item, channel) {
   const existing = state.signals.find(s => s.signal === signal && s.frame_id === msg.frame_id && s.channel === channel);
   if (existing) {
