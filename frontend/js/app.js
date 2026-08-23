@@ -170,6 +170,27 @@ function showCursorTipAt(x, y, html) {
   cursorTip.style.top = Math.max(8, ty) + "px";
 }
 
+/* 光标同步:鼠标在某示波器上移动时,其他示波器显示垂直虚线跟随(CANoe 式) */
+let syncingCursor = false;
+function syncCursor(u, x, y) {
+  if (syncingCursor) return;
+  syncingCursor = true;
+  const tv = u.posToVal(x, "x");          // 光标处的 x 值(时间)
+  state.plots.forEach(p => {
+    if (p.uplot && p.uplot !== u) {
+      const xp = p.uplot.valToPos(tv, "x");  // 换算到目标窗口的像素位置
+      p.uplot.setCursor({ left: xp, top: y, show: true });
+    }
+  });
+  syncingCursor = false;
+}
+/* 鼠标离开某示波器 → 其他窗口的光标一并隐藏 */
+function hideSyncedCursor(u) {
+  state.plots.forEach(p => {
+    if (p.uplot && p.uplot !== u) p.uplot.setCursor({ show: false });
+  });
+}
+
 /* 更新已选信号列的值(不弹 tooltip) */
 function updateSigVals(u, x) {
   const idx = u.posToIdx(x);
@@ -592,6 +613,7 @@ function makePlotOpts(p) {
       stroke: "#7dd3fc", width: 1, dash: [4, 3],
       move: (u, x, y) => {
         onCursorMove(u, x, y);
+        syncCursor(u, x, y);   // 其他示波器垂直虚线跟随
         return [x, y];
       },
     },
@@ -603,6 +625,7 @@ function makePlotOpts(p) {
         broadcastX(u, min, max);
       }],
       ready: [(u) => {
+        u.over.addEventListener("mouseleave", () => hideSyncedCursor(u));
         u.over.addEventListener("wheel", (e) => {
           e.preventDefault();
           const factor = e.deltaY < 0 ? 0.85 : 1.18;
