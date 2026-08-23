@@ -403,12 +403,12 @@ function createLwcChart(p) {
     grid: { vertLines: { color: "#242830" }, horzLines: { color: "#242830" } },
     rightPriceScale: { visible: false },
     leftPriceScale: { visible: true, borderColor: "#3a4150" },
-    timeScale: { borderColor: "#3a4150", timeVisible: false, secondsVisible: true, rightOffset: 2 },
+    timeScale: { borderColor: "#3a4150", timeVisible: true, secondsVisible: true, rightOffset: 2 },
     crosshair: {
       vertLine: { color: "#7dd3fc", width: 1, style: LightweightCharts.LineStyle.Dashed, labelVisible: false },
       horzLine: { visible: false },   // 只竖线
     },
-    localization: { timeFormatter: ms => (ms / 1000).toFixed(2) + "s" },
+    localization: { timeFormatter: t => (t / 1000).toFixed(2) + "s" },   // time 单位=毫秒 → 显示相对秒
   });
   p.chart = chart;
   p.series = {};    // slot → LineSeries
@@ -444,9 +444,11 @@ function createLwcChart(p) {
   return chart;
 }
 
-/* 缩放同步:某窗口可见范围变化 → 广播所有窗口(时间轴全同步) */
+/* 缩放同步:某窗口可见范围变化 → 广播所有窗口(时间轴全同步)。
+   播放中跳过:播放时 x 由 draw 固定全量(曲线在固定时间轴上增长,禁止跳动) */
 function syncXRanges(src, range) {
   if (syncingX) return;
+  if (playState.playing) return;   // 播放中 x 固定,不广播
   syncingX = true;
   state.xRange = { min: range.from / 1000, max: range.to / 1000 };
   state.plots.forEach(p => {
