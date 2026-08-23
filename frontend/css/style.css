@@ -602,3 +602,6 @@ td.t-data { color: #c9a86a; }
   #sidebar { display: none; }
   #body { flex-direction: column; }
 }
+
+/* 播放诊断条 */
+.pb-diag { font-size: 10px; color: #5ad47a; margin-left: auto; font-family: ui-monospace, Menlo, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 60%; }

@@ -50,7 +50,7 @@ window.addEventListener("error", (e) => {
   const stack = (e.error && e.error.stack || "").split("\n")[1] || "";
   showTip("JS错误: " + e.message + " " + stack.trim());
 });
-window.addEventListener("unhandledrejection", (e) => showTip("异常: " + e.reason));
+window.addEventListener("unhandledrejection", (e) => { diag.errs++; showTip("异常: " + e.reason); });
 
 async function api(path, opts) {
   const r = await fetch(path, opts);
@@ -1649,6 +1649,14 @@ function showPlaybar(show) {
 }
 
 let replayQueue = [];   // WS 未就绪时的待发消息(连接建立后 flush)
+/* 播放诊断(排障):WS 状态 / 消息计数 / 数据点数 实时显示 */
+const diag = { msgs: 0, batch: 0, progress: 0, state: 0, lastBatchT: 0, wsOpen: 0, errs: 0 };
+function updateDiag() {
+  const el = document.getElementById("play-diag");
+  if (!el) return;
+  const pts = Object.values(playState.data).reduce((a, d) => a + (d.times ? d.times.length : 0), 0);
+  el.textContent = `WS:${playState.ws ? playState.ws.readyState : "-"} 收:${diag.msgs}(st:${diag.state}/bt:${diag.batch}/pg:${diag.progress}) 点:${pts} t:${playState.t.toFixed(2)}s play:${playState.playing ? "Y" : "N"}`;
+}
 
 function connectReplay() {
   if (playState.ws && playState.ws.readyState === 1) return;
@@ -1659,7 +1667,13 @@ function connectReplay() {
     replayQueue.forEach(m => playState.ws.send(JSON.stringify(m)));
     replayQueue = [];
   };
-  playState.ws.onmessage = e => onReplayMsg(JSON.parse(e.data));
+  playState.ws.onmessage = e => {
+    diag.msgs++;
+    try { onReplayMsg(JSON.parse(e.data)); }
+    catch (err) { diag.errs++; showTip("播放消息处理错误: " + err.message); }
+    updateDiag();
+  };
+  playState.ws.onerror = () => { diag.errs++; updateDiag(); };
   playState.ws.onclose = () => {
     playState.playing = false;
     playState.ws = null;   // 置空,下次 startPlayback 重新连接
@@ -1738,7 +1752,7 @@ function setPlayRate(r) {
 /* 收到后端推送(帧批次 → 累积 → 节流渲染) */
 let _firstBatchT = 0;
 function onReplayMsg(m) {
-  if (m.type === "batch") {
+  if (m.type === "batch") { diag.batch++; diag.lastBatchT = Date.now();
     if (!_firstBatchT) {
       _firstBatchT = Date.now();
       // 自检:2 秒后仍无任何数据 → 提示(定位播放失效)
@@ -1755,9 +1769,11 @@ function onReplayMsg(m) {
     playState.t = m.t1;
     schedulePlayRender();
   } else if (m.type === "progress") {
+    diag.progress++;
     playState.t = m.t;
     updateProgressUI();
   } else if (m.type === "state") {
+    diag.state++;
     playState.playing = m.playing;
     playState.rate = m.rate;
     playState.dur = m.dur;
@@ -1837,6 +1853,8 @@ function pausePlayOnSignalChange() {
     updatePlayUI();
   }
 }
+
+setInterval(updateDiag, 800);   // 诊断条定时刷新
 
 init().catch(e => {
   document.getElementById("tree-hint").textContent = "加载失败: " + e.message;
