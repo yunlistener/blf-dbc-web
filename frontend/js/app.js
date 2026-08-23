@@ -1631,6 +1631,9 @@ function resetPlayData() {
 function startPlayback() {
   if (!state.signals.length) { showTip("请先添加信号"); return; }
   if (!state.blf) { showTip("请先选择 BLF 文件"); return; }
+  cancelAnimationFrame(playRaf);
+  playState.renderPending = false;
+  state.xRange = null;   // 播放开始时 x 范围由首批数据/state 决定,之后固定
   if (!playState.ws || playState.ws.readyState !== 1) connectReplay();
   resetPlayData();
   draw();   // 清空曲线
@@ -1648,7 +1651,11 @@ function togglePlay() {
 
 function stopPlayback() {
   sendReplay({ type: "stop" });
+  playState.playing = false;
   playState.t = 0;
+  state.xRange = null;
+  cancelAnimationFrame(playRaf);
+  playState.renderPending = false;
   resetPlayData();
   draw();
   updatePlayUI();
@@ -1689,29 +1696,46 @@ function onReplayMsg(m) {
     updatePlayUI();
   } else if (m.type === "end") {
     playState.playing = false;
+    state.xRange = null;      // 结束 → 恢复自动 x 范围
+    cancelAnimationFrame(playRaf);
+    playState.renderPending = false;
     applyPlayData();   // 最终渲染全量
     updatePlayUI();
     showTip("回放结束");
   }
 }
 
-/* 渲染节流:约每 200ms 把累积数据应用到示波器(曲线随时间增长) */
+/* 渲染循环:rAF 毫秒级把累积数据应用到示波器(曲线随时间平滑增长) */
+let playRaf = 0;
 function schedulePlayRender() {
   if (playState.renderPending) return;
   playState.renderPending = true;
-  setTimeout(() => {
-    playState.renderPending = false;
-    applyPlayData();
-  }, 200);
+  playRaf = requestAnimationFrame(playRenderLoop);
+}
+function playRenderLoop() {
+  playState.renderPending = false;
+  applyPlayData();
+  // 播放中持续以显示刷新率重绘(数据未变时 draw 内部 setData 开销极小)
+  if (playState.playing) {
+    playState.renderPending = true;
+    playRaf = requestAnimationFrame(playRenderLoop);
+  }
 }
 
 /* StreamRenderer:累积数据 → state.signals → draw(增量曲线) */
 function applyPlayData() {
+  let any = false;
   for (const s of state.signals) {
     const key = `${s.frame_id}|${s.channel}|${s.signal}`;
     const d = playState.data[key];
-    if (d && d.times.length) s.data = { times: d.times, values: d.values };
+    if (d && d.times.length) {
+      s.data = { times: d.times, values: d.values };
+      any = true;
+    }
   }
+  if (!any) return;
+  // 播放模式:x 轴固定全量范围(时间轴不动,曲线在固定时间轴上往后画)
+  if (playState.dur > 0) state.xRange = { min: 0, max: playState.dur };
   draw();
 }
 
