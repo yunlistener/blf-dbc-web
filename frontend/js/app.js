@@ -475,6 +475,9 @@ function broadcastX(u, min, max) {
 /* 单个示波器窗口的 uPlot 配置 */
 function makePlotOpts(p) {
   const sigs = p.sigs;
+  // 共享时间轴:只有最后一个非空窗口显示 x 轴刻度(其余隐藏,网格线保留)
+  const maxNonEmpty = Math.max(-1, ...state.plots.filter(x => x.sigs && x.sigs.length).map(x => x.id));
+  const isLast = p.id === maxNonEmpty;
   // 每个信号独立 y 轴(CANoe 式):第 1 个左轴,其余右轴(信号色刻度),同窗不互相压扁
   const series = [{}, ...sigs.map((s, i) => ({
     show: true, label: s.signal, stroke: () => s.color,
@@ -486,8 +489,8 @@ function makePlotOpts(p) {
   // 预创建 10 个 y 轴 scale(窗口信号数增减时 series 引用的 scale 始终存在)
   for (let i = 0; i < 10; i++) scales[i === 0 ? "y" : "y" + (i + 1)] = { auto: true };
   const axes = [
-    // x 轴(下):CANoe 式每个窗口底部都有刻度,时间同步后对齐
-    { show: true, stroke: "#8a93a3", grid: { stroke: "#242830", width: 1 },
+    // x 轴(下):只在最后一个非空窗口显示 → 视觉上共享一条时间轴
+    { show: isLast, stroke: "#8a93a3", grid: { stroke: "#242830", width: 1 },
       ticks: { stroke: "#3a4150" }, font: "11px ui-monospace, Menlo",
       values: (u, vals) => vals.map(v => v.toFixed(2) + "s") },
     // 第 1 个信号:左 y 轴
