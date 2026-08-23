@@ -170,13 +170,26 @@ function showCursorTipAt(x, y, html) {
   cursorTip.style.top = Math.max(8, ty) + "px";
 }
 
+/* 嵌套数据格式下取 series 在 x 处的值(二分最近邻) */
+function seriesValAt(u, i, x) {
+  const arr = u.data[i];
+  if (!arr || !arr.length) return null;
+  let lo = 0, hi = arr.length - 1;
+  if (x <= arr[0][0]) return arr[0][1];
+  if (x >= arr[hi][0]) return arr[hi][1];
+  while (lo < hi - 1) {
+    const mid = (lo + hi) >> 1;
+    if (arr[mid][0] <= x) lo = mid; else hi = mid;
+  }
+  return (x - arr[lo][0] < arr[hi][0] - x) ? arr[lo][1] : arr[hi][1];
+}
+
 /* 更新已选信号列的值(不弹 tooltip) */
 function updateSigVals(u, x) {
-  const idx = u.posToIdx(x);
   const p = state.plots.find(pp => pp.uplot === u);
   if (!p) return;
   p.sigs.forEach((s, i) => {
-    const v = u.data[i + 1] ? u.data[i + 1][idx] : null;
+    const v = seriesValAt(u, i + 1, x);
     const valEl = document.getElementById(`sigval-${s.slot}`);
     if (valEl) valEl.textContent = fmtSigValUnit(s, v);
   });
@@ -187,7 +200,6 @@ function onCursorMove(u, x, y) {
   updateSigVals(u, x);
   const t = u.posToVal(x, "x");
   state.lastCursorT = t;   // 记录最后光标时刻(信号行 tooltip 用)
-  const idx = u.posToIdx(x);
   const p = state.plots.find(pp => pp.uplot === u);
   const rows = [`<div class="tip-row">时间 <b>${t.toFixed(3)} s</b></div>`];
   // 双点测量:锚点存在时显示 Δt 与频率
@@ -197,7 +209,7 @@ function onCursorMove(u, x, y) {
       (dt !== 0 ? ` (${(1 / Math.abs(dt)).toFixed(2)} Hz)` : "") + `</div>`);
   }
   if (p) p.sigs.forEach((s, i) => {
-    const v = u.data[i + 1] ? u.data[i + 1][idx] : null;
+    const v = seriesValAt(u, i + 1, x);
     rows.push(`<div class="tip-row"><span class="dot" style="background:${s.color}"></span>` +
       `${s.signal}: <b>${fmtSigVal(s, v)}</b><span class="u">${s.unit || ""}</span>${ecuTagHtml(s)}</div>`);
   });
@@ -424,36 +436,21 @@ function updatePlotData(p) {
     p.canvasEl.innerHTML = "";
     return;
   }
-  // x 轴:本示波器内信号时间并集
-  const xSet = new Set();
-  for (const s of sigs) for (const t of s.data.times) xSet.add(t);
-  const x = Array.from(xSet).sort((a, b) => a - b);
-  const per = {};
-  sigs.forEach((s, i) => {
-    const v = new Array(x.length).fill(null);
-    const t = s.data.times;
-    let j = 0;
-    for (let k = 0; k < x.length; k++) {
-      while (j < t.length && t[j] < x[k]) j++;
-      if (j < t.length && t[j] === x[k]) {
-        const raw = s.data.values[j];
-        // 值表信号 decode 返回 {name, value} 对象 → 取 value 数值画线
-        v[k] = (raw != null && typeof raw === "object" && "value" in raw) ? raw.value : raw;
-      }
+  // 数据构建(方案 A:每信号独立 [t,v] 序列,不做统一 x 并集)。
+  // 同窗信号时间戳浮点不重合时,统一 x 并集翻倍 → per 数组 null 交错
+  // → uPlot 折线断裂成点阵。嵌套格式让每个信号用自己的采样点画连续线,
+  // 时间刻度共享(CANoe Graphics 行为),零数据修改、不增加采样率。
+  const data = sigs.map(s => {
+    const t = s.data.times, v = s.data.values;
+    if (!t.length) return [];
+    const arr = new Array(t.length);
+    for (let i = 0; i < t.length; i++) {
+      const raw = v[i];
+      const val = (raw != null && typeof raw === "object" && "value" in raw) ? raw.value : raw;
+      arr[i] = [t[i], val];
     }
-    // 前向填充 null:同窗信号时间戳浮点不重合(如 0.712612 vs 0.7126119999),
-    // 并集翻倍 → per 数组"值/null/值/null"交错 → uPlot 折线每两点断一次,
-    // 只剩断线段(视觉=点阵)。所有信号前向填充后线连续(值保持到下一采样,
-    // 100Hz 同频间隙 10ms 视觉无感);值表信号另记实际采样位置供点标记。
-    if (s.choices) s._sampleIdx = new Set();
-    let last = null;
-    for (let k = 0; k < v.length; k++) {
-      if (v[k] != null) { last = v[k]; if (s.choices) s._sampleIdx.add(k); }
-      else if (last != null) v[k] = last;
-    }
-    per[i + 1] = v;
+    return arr;
   });
-  const data = [x, ...sigs.map((_, i) => per[i + 1] || [])];
   // ⚠️ 信号数变化 → 重建 uPlot:series 配置创建时固定,setData 不能动态加 series,
   // 同窗信号增多时数据列数 > series 数,多余列不渲染(曲线消失的根因)
   if (p.uplot && p.seriesCount !== sigs.length) {
@@ -478,13 +475,14 @@ function updatePlotData(p) {
   }
   // 共享 y 轴:聚合窗口内所有信号的值域 + padding(自动调整最大最小值显示全部信号)
   let lo = Infinity, hi = -Infinity;
-  sigs.forEach((s, i) => {
-    for (const v of per[i + 1]) {
-      if (v == null) continue;
-      if (v < lo) lo = v;
-      if (v > hi) hi = v;
+  for (const arr of data) {
+    for (const pt of arr) {
+      const val = pt[1];
+      if (val == null) continue;
+      if (val < lo) lo = val;
+      if (val > hi) hi = val;
     }
-  });
+  }
   if (lo === Infinity) { lo = 0; hi = 1; }
   else if (lo === hi) { lo -= 1; hi += 1; }          // 恒值信号(如全 0)扩开
   else { const pad = (hi - lo) * 0.15; lo -= pad; hi += pad; }
@@ -500,11 +498,18 @@ function updatePlotData(p) {
   });
   // 显式设置 x 范围:uPlot 对后创建的窗口 x scale 不自动计算(实测 undefined),
   // 导致 x 轴 _show=false 不绘制 → 这里手动算(数据范围或同步范围)
-  const xData = p.uplot.data[0];
+  let xLo = Infinity, xHi = -Infinity;
+  for (const arr of data) {
+    if (arr.length) {
+      if (arr[0][0] < xLo) xLo = arr[0][0];
+      if (arr[arr.length - 1][0] > xHi) xHi = arr[arr.length - 1][0];
+    }
+  }
+  if (xLo === Infinity) { xLo = 0; xHi = 1; }
   if (state.xRange) {
     p.uplot.setScale("x", state.xRange);
-  } else if (xData && xData.length) {
-    p.uplot.setScale("x", { min: xData[0], max: xData[xData.length - 1] });
+  } else {
+    p.uplot.setScale("x", { min: xLo, max: xHi });
   }
   // 刷新本示波器信号的已选列值
   const b = p.uplot.bbox;
@@ -540,18 +545,8 @@ function makePlotOpts(p) {
     // 前向填充 null(状态保持)后,linear 折线自然呈现阶梯状。
     if (s.choices) {
       conf.width = 1.5;
-      // 采样点标记:前向填充后所有位置都非 null,默认 points 会在每个点画圆;
-      // 这里用 mask 只在真实采样位置画点(复用 uPlot 默认 points 路径)
-      conf.points = {
-        show: () => true,
-        size: 5,
-        paths: (self, sidx, idx0, idx1, _filt) => {
-          const mask = s._sampleIdx;
-          const pts = [];
-          if (mask) for (const k of mask) if (k >= idx0 && k <= idx1) pts.push(k);
-          return uPlot.paths.points()(self, sidx, idx0, idx1, pts.length ? pts : null);
-        },
-      };
+      // 采样点标记:嵌套格式下数据即真实采样点(无 null 填充),直接全部显示
+      conf.points = { show: () => true, size: 5 };
     }
     return conf;
   })];
@@ -1260,8 +1255,15 @@ document.getElementById("btn-reset").onclick = () => {
   state.xRange = null;
   state.plots.forEach(p => {
     if (!p.uplot) return;
-    const x = p.uplot.data[0];
-    if (x && x.length) p.uplot.setScale("x", { min: x[0], max: x[x.length - 1] });
+    // 嵌套格式:x 范围从所有 series 数据聚合
+    let xLo = Infinity, xHi = -Infinity;
+    for (const arr of p.uplot.data) {
+      if (arr && arr.length) {
+        if (arr[0][0] < xLo) xLo = arr[0][0];
+        if (arr[arr.length - 1][0] > xHi) xHi = arr[arr.length - 1][0];
+      }
+    }
+    if (xLo !== Infinity) p.uplot.setScale("x", { min: xLo, max: xHi });
   });
 };
 // 用 ResizeObserver 观察图表容器:抽屉/信号树展开动画期间容器宽度逐帧变化,
