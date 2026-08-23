@@ -500,15 +500,45 @@ function broadcastX(u, min, max) {
   syncingX = false;
 }
 
+/* 值表信号的阶梯线路径(step-after):值保持到下一个采样点,离散状态清晰 */
+function stepPath(u, seriesIdx, idx0, idx1) {
+  const xData = u.data[0];
+  const yData = u.data[seriesIdx];
+  const path = new Path2D();
+  let px = null, py = null, started = false;
+  for (let i = idx0; i <= idx1; i++) {
+    const y = yData[i];
+    if (y == null) { started = false; continue; }
+    const cx = u.valToPos(xData[i], "x", true);
+    const cy = u.valToPos(y, "y", true);
+    if (!started) { path.moveTo(cx, cy); started = true; }
+    else {
+      path.lineTo(cx, py);   // 水平段:保持上一个值
+      path.lineTo(cx, cy);   // 垂直段:跳转到新值
+    }
+    px = cx; py = cy;
+  }
+  return path;
+}
+
 /* 单个示波器窗口的 uPlot 配置 */
 function makePlotOpts(p) {
   const sigs = p.sigs;
   // 同窗信号共享 y 轴(CANoe 默认):y 范围由 updatePlotData 聚合所有信号值域
-  const series = [{}, ...sigs.map(s => ({
-    show: true, label: s.signal, stroke: () => s.color,
-    scale: "y", auto: true, width: 2,
-    points: { show: () => false },
-  }))];
+  const series = [{}, ...sigs.map(s => {
+    const conf = {
+      show: true, label: s.signal, stroke: () => s.color,
+      scale: "y", auto: true, width: 2,
+      points: { show: () => false },
+    };
+    if (s.choices) {
+      // 值表信号:阶梯线 + 采样点标记(离散状态、稀疏采样清晰可见,不误导为连续变化)
+      conf.paths = stepPath;
+      conf.width = 1.5;
+      conf.points = { show: true, size: 4 };
+    }
+    return conf;
+  })];
   const scales = { x: { time: false }, y: { auto: true } };
   const axes = [
     // x 轴:每个窗口底部都有时间轴(时间同步后刻度一致)
