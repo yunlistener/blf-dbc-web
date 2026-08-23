@@ -442,9 +442,10 @@ function updatePlotData(p) {
     // 稀疏采样与密集信号共用时间轴时,值表信号大量位置是 null,uPlot 折线遇 null 断线,
     // 孤立采样点连不成线导致整条线不渲染;前向填充后 linear 折线呈现连续阶梯状。
     if (s.choices) {
+      s._sampleIdx = new Set();   // 记录实际采样位置(供采样点标记用)
       let last = null;
       for (let k = 0; k < v.length; k++) {
-        if (v[k] != null) last = v[k];
+        if (v[k] != null) { last = v[k]; s._sampleIdx.add(k); }
         else if (last != null) v[k] = last;
       }
     }
@@ -537,7 +538,18 @@ function makePlotOpts(p) {
     // 前向填充 null(状态保持)后,linear 折线自然呈现阶梯状。
     if (s.choices) {
       conf.width = 1.5;
-      conf.points = { show: true, size: 5 };   // 采样点标记:离散状态在真实采样点画小圆点
+      // 采样点标记:前向填充后所有位置都非 null,默认 points 会在每个点画圆;
+      // 这里用 mask 只在真实采样位置画点(复用 uPlot 默认 points 路径)
+      conf.points = {
+        show: () => true,
+        size: 5,
+        paths: (self, sidx, idx0, idx1, _filt) => {
+          const mask = s._sampleIdx;
+          const pts = [];
+          if (mask) for (const k of mask) if (k >= idx0 && k <= idx1) pts.push(k);
+          return uPlot.paths.points()(self, sidx, idx0, idx1, pts.length ? pts : null);
+        },
+      };
     }
     return conf;
   })];
