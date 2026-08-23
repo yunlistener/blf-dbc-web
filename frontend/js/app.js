@@ -1,16 +1,20 @@
 /* CANoe 风格前端逻辑:文件 → 报文树 → 多信号曲线 → Trace → 统计 */
 "use strict";
 
-const PALETTE = ["#4da3ff", "#ffb84d", "#5ad47a", "#ff6b6b", "#c77dff", "#4dd6c8"];
-const MAX_SERIES = 6;   // uPlot 系列数固定,槽位复用
+const PALETTE = ["#4da3ff", "#ffb84d", "#5ad47a", "#ff6b6b", "#c77dff",
+                 "#4dd6c8", "#f472b6", "#a3e635", "#fb923c", "#60a5fa",
+                 "#fda4af", "#93c5fd", "#c4b5fd", "#86efac", "#fcd34d",
+                 "#7dd3fc", "#f0abfc", "#bef264", "#fdba74", "#a5b4fc"];  // 20 色循环
+const MAX_SERIES = 64;   // 最多同时显示 64 个信号
 
 const state = {
   blf: null,
   dbc: null,
   stats: null,
   signals: [],       // 已选信号 [{frame_id, signal, unit, color, slot, data, channel, dbc, plotId}]
-  plots: [],         // 坐标系 [{id, el, canvasEl, uplot, sigs: [...]}]
-  plotSeq: 1,        // 下一个坐标系 ID
+  plots: [],         // 示波器 [{id, el, canvasEl, uplot, sigs: [...]}]
+  plotIds: [],       // 示波器 id 有序列表(含空示波器)
+  plotSeq: 1,        // 下一个示波器 ID
   xRange: null,      // 时间轴同步范围(缩放后 {min, max});null = 自动
   trace: { frameId: null, channel: null, offset: 0, limit: 200, search: null, range: null },
   config: {},        // 工程配置(总线/波特率/文件/通道映射)
@@ -172,7 +176,7 @@ function updateSigVals(u, x) {
   });
 }
 
-/* 光标移动:更新信号列值 + 显示 tooltip(时间 + 本坐标系信号值) */
+/* 光标移动:更新信号列值 + 显示 tooltip(时间 + 本示波器信号值) */
 function onCursorMove(u, x, y) {
   updateSigVals(u, x);
   const t = u.posToVal(x, "x");
@@ -220,7 +224,7 @@ function showSigRowTip(s, el) {
   showCursorTipAt(rect.right + 8, rect.top, html);
 }
 
-/* 左侧已选信号列:颜色标记 + 信号名 + 当前值 + 坐标系分配 + 移除 */
+/* 左侧已选信号列:颜色标记 + 信号名 + 当前值 + 示波器分配 + 移除 */
 function renderSigSidebar() {
   const box = document.getElementById("sig-sidebar");
   if (!state.signals.length) {
@@ -228,17 +232,21 @@ function renderSigSidebar() {
       <div class="hint" style="padding:8px;font-size:11px">点击左侧信号树选择</div>`;
     return;
   }
-  // 坐标系列表(来自所有已选信号的 plotId 并集,含新信号未渲染的)
-  const plotIds = [...new Set(state.signals.map(s => s.plotId))].sort((a, b) => a - b);
+  // 示波器 id 列表(含空示波器)
+  const plotIds = state.plotIds.slice().sort((a, b) => a - b);
   const plotOptions = pid => plotIds.map(x =>
-    `<option value="${x}" ${x === pid ? "selected" : ""}>坐标系 ${x}</option>`).join("");
-  box.innerHTML = `<div class="sig-sidebar-title">已选信号 (${state.signals.length}/${MAX_SERIES})</div>` +
+    `<option value="${x}" ${x === pid ? "selected" : ""}>示波器 ${x}</option>`).join("");
+  box.innerHTML = `<div class="sig-sidebar-title">已选信号 (${state.signals.length}/${MAX_SERIES})
+      <span class="sig-sidebar-actions">
+        <button class="btn-mini" onclick="addPlot()" title="增加空示波器">+</button>
+        <button class="btn-mini" onclick="removePlot()" title="删除空示波器">−</button>
+      </span></div>` +
     state.signals.map(s => `
       <div class="sig-sidebar-row" id="sigrow-${s.slot}">
         <span class="dot" style="background:${s.color}"></span>
         <span class="sname" title="${s.signal}">${s.signal}</span>
         <span class="sval" id="sigval-${s.slot}">—</span>
-        <select class="plot-sel" title="显示在哪个坐标系" onchange="moveSignalToPlot(${s.slot}, this.value)">${plotOptions(s.plotId)}</select>
+        <select class="plot-sel" title="显示在哪个示波器" onchange="moveSignalToPlot(${s.slot}, this.value)">${plotOptions(s.plotId)}</select>
         <span class="srm" title="移除" onclick="removeSignal(${s.slot})">✕</span>
       </div>`).join("");
   // 行 hover → tooltip 显示信号详情
@@ -262,11 +270,11 @@ function removeSignal(slot) {
     }
   });
   saveSelectedSignals();   // 持久化:刷新后恢复
-  draw();   // syncPlots 会自动移除空坐标系
+  draw();   // syncPlots 会自动移除空示波器
   if (currentTab() === "sigstats") loadSigStats();
 }
 
-/* 将信号移动到指定坐标系 */
+/* 将信号移动到指定示波器 */
 function moveSignalToPlot(slot, pid) {
   const s = state.signals.find(x => x.slot === slot);
   if (!s) return;
@@ -306,15 +314,15 @@ async function restoreSelectedSignals() {
         restored++;
       }
     }
-    return restored > 0;
+    return restored;   // 返回恢复数量(loadDbcTree 提示用)
   } catch (e) {
-    return false;
+    return 0;
   }
 }
 
-/* ============ 多坐标系示波器(CANoe 式) ============ */
+/* ============ 多示波器示波器(CANoe 式) ============ */
 function draw() {
-  renderSigSidebar();   // 左侧已选信号列(含坐标系分配下拉)
+  renderSigSidebar();   // 左侧已选信号列(含示波器分配下拉)
   if (!state.signals.length) {
     state.plots.forEach(p => { if (p.uplot) p.uplot.destroy(); p.el.remove(); });
     state.plots = [];
@@ -324,23 +332,17 @@ function draw() {
   syncPlots();
 }
 
-/* 按坐标系分组并同步所有 plot 实例 */
+/* 按示波器 id 列表同步所有 plot 实例(含空示波器) */
 function syncPlots() {
   const wrap = document.getElementById("plot-wrap");
-  const groups = new Map();
-  for (const s of state.signals) {
-    if (s.plotId == null) s.plotId = state.plotSeq++;   // 默认每信号一个坐标系
-    if (!groups.has(s.plotId)) groups.set(s.plotId, []);
-    groups.get(s.plotId).push(s);
-  }
-  const ids = [...groups.keys()].sort((a, b) => a - b);
+  const ids = state.plotIds.slice().sort((a, b) => a - b);
   const keep = new Set(ids);
-  // 销毁消失的坐标系
+  // 销毁消失的示波器
   state.plots = state.plots.filter(p => {
     if (!keep.has(p.id)) { if (p.uplot) p.uplot.destroy(); p.el.remove(); return false; }
     return true;
   });
-  // 创建缺失的坐标系容器
+  // 创建缺失的示波器容器
   ids.forEach(id => {
     let p = state.plots.find(x => x.id === id);
     if (!p) {
@@ -356,18 +358,43 @@ function syncPlots() {
       p = { id, el, canvasEl, uplot: null, title };
       state.plots.push(p);
     }
-    p.sigs = groups.get(id);
+    p.sigs = state.signals.filter(s => s.plotId === id);
   });
   state.plots.forEach(p => updatePlotData(p));
 }
 
-/* 单个坐标系的数据与实例 */
+/* 添加一个空示波器 */
+function addPlot() {
+  state.plotIds.push(state.plotSeq++);
+  draw();
+}
+/* 移除最后一个空示波器(非空提示) */
+function removePlot() {
+  for (let i = state.plotIds.length - 1; i >= 0; i--) {
+    if (!state.signals.some(s => s.plotId === state.plotIds[i])) {
+      state.plotIds.splice(i, 1);
+      draw();
+      return;
+    }
+  }
+  showTip("所有示波器都含有信号,请先移除信号再删除示波器");
+}
+
+/* 单个示波器的数据与实例 */
 function updatePlotData(p) {
   const sigs = p.sigs;
-  // 标题:色点 + 信号名
-  p.title.innerHTML = sigs.map(s =>
-    `<span class="pt-dot" style="background:${s.color}"></span><span>${s.signal}${s.unit ? " (" + s.unit + ")" : ""}</span>`).join("");
-  // x 轴:本坐标系内信号时间并集
+  // 标题:示波器号 + 色点 + 信号名
+  p.title.innerHTML = `<span style="color:#4da3ff;font-weight:600">示波器 ${p.id}</span>` +
+    (sigs.length
+      ? sigs.map(s => `<span class="pt-dot" style="background:${s.color}"></span><span>${s.signal}${s.unit ? " (" + s.unit + ")" : ""}</span>`).join("")
+      : `<span style="color:#5c6472">(空)在左侧已选信号中分配信号,或点 [+]</span>`);
+  // 空示波器:不创建 uPlot
+  if (!sigs.length) {
+    if (p.uplot) { p.uplot.destroy(); p.uplot = null; }
+    p.canvasEl.innerHTML = "";
+    return;
+  }
+  // x 轴:本示波器内信号时间并集
   const xSet = new Set();
   for (const s of sigs) for (const t of s.data.times) xSet.add(t);
   const x = Array.from(xSet).sort((a, b) => a - b);
@@ -403,13 +430,13 @@ function updatePlotData(p) {
   }
   // 恢复时间同步范围
   if (state.xRange) p.uplot.setScale("x", state.xRange);
-  // 刷新本坐标系信号的已选列值
+  // 刷新本示波器信号的已选列值
   const b = p.uplot.bbox;
   const pxr = uPlot.pxRatio || 1;
   updateSigVals(p.uplot, b.width / pxr / 2);
 }
 
-/* 时间轴同步:任一坐标系缩放/平移 → 广播到所有坐标系 */
+/* 时间轴同步:任一示波器缩放/平移 → 广播到所有示波器 */
 let syncingX = false;
 function broadcastX(u, min, max) {
   if (syncingX) return;
@@ -421,7 +448,7 @@ function broadcastX(u, min, max) {
   syncingX = false;
 }
 
-/* 单个坐标系的 uPlot 配置 */
+/* 单个示波器的 uPlot 配置 */
 function makePlotOpts(p) {
   const sigs = p.sigs;
   const withU = state.plots.filter(x => x.uplot);
@@ -449,7 +476,7 @@ function makePlotOpts(p) {
       },
     },
     axes: [
-      // x 轴:只在最后一个坐标系显示(避免重复刻度)
+      // x 轴:只在最后一个示波器显示(避免重复刻度)
       { show: isLast, stroke: "#8a93a3", grid: { stroke: "#242830", width: 1 },
         ticks: { stroke: "#3a4150" }, font: "11px ui-monospace, Menlo",
         values: (u, vals) => vals.map(v => v.toFixed(2) + "s") },
@@ -493,7 +520,7 @@ function makePlotOpts(p) {
           state.plots.forEach(pp => { if (pp.uplot) pp.uplot.redraw(); });
         });
       }],
-      // 时间轴顶部标记:测量锚点(黄)+ 本坐标系信号的抖动峰值
+      // 时间轴顶部标记:测量锚点(黄)+ 本示波器信号的抖动峰值
       draw: [(u) => {
         const ctx = u.ctx;
         ctx.save();
@@ -713,6 +740,7 @@ async function loadFiles() {
   state.signals = [];
   state.plots.forEach(p => { if (p.uplot) p.uplot.destroy(); });
   state.plots = [];
+  state.plotIds = [];
   state.plotSeq = 1;
   state.xRange = null;
   document.getElementById("plot-wrap").innerHTML = "";
@@ -955,7 +983,7 @@ async function toggleSignal(msg, signal, item, channel) {
     state.signals = state.signals.filter(s => s !== existing);
     item.classList.remove("active");
     saveSelectedSignals();
-    draw();   // syncPlots 自动销毁空坐标系
+    draw();   // syncPlots 自动销毁空示波器
     return;
   }
   if (state.signals.length >= MAX_SERIES) {
@@ -1006,8 +1034,15 @@ async function toggleSignal(msg, signal, item, channel) {
   data.times = data.times.map(t => t - state.t0);
   // 槽位分配须与 push 同步完成(避免并发请求拿到相同槽位)
   const usedSlots = new Set(state.signals.map(s => s.slot));
-  const slot = [1, 2, 3, 4, 5, 6].find(i => !usedSlots.has(i));
-  state.signals.push({ frame_id: msg.frame_id, signal, unit, color, slot, data, channel, dbc, choices, comment, senders, plotId: state.plotSeq++ });   // 默认每信号一个坐标系
+  const slot = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+                17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
+                31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
+                45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58,
+                59, 60, 61, 62, 63, 64].find(i => !usedSlots.has(i));
+  // 默认每信号新建一个示波器
+  const pid = state.plotSeq++;
+  state.plotIds.push(pid);
+  state.signals.push({ frame_id: msg.frame_id, signal, unit, color, slot, data, channel, dbc, choices, comment, senders, plotId: pid });
   saveSelectedSignals();   // 持久化:刷新后恢复
   draw();
   // 信号统计 tab 已打开时,新选信号要刷新统计
@@ -1026,7 +1061,7 @@ document.getElementById("btn-export").onclick = () => {
     frame_id: "0x" + s.frame_id.toString(16),
     channel: String(s.channel),
   });
-  // 缩放区间导出:示波器有缩放时,只导出当前 x 轴范围(时间同步,取任一坐标系)
+  // 缩放区间导出:示波器有缩放时,只导出当前 x 轴范围(时间同步,取任一示波器)
   const p0 = state.plots.find(x => x.uplot);
   if (p0) {
     const sx = p0.uplot.scales.x;
@@ -1312,7 +1347,7 @@ async function loadSigStats() {
           `&frame_id=0x${s.frame_id.toString(16)}&channel=${s.channel}`);
         msgCache[s.frame_id] = cs;
       }
-      // 抖动峰值时间点 → 示波器 x 轴标记(记录信号名,按坐标系过滤)
+      // 抖动峰值时间点 → 示波器 x 轴标记(记录信号名,按示波器过滤)
       if (cs.jitter_max_at != null) {
         state.jitterMarks.push({ t: cs.jitter_max_at - state.t0, color: s.color, signal: s.signal });
       }
