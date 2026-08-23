@@ -49,8 +49,8 @@ body {
 
 /* 左侧报文树 */
 #sidebar {
-  width: 50%;               /* 信号树默认占 1/2 屏幕宽 */
-  min-width: 50%;
+  width: 33.33%;             /* 信号树默认占 1/3 屏幕宽 */
+  min-width: 33.33%;
   background: #1a1d23;
   border-right: 1px solid #2b2f38;
   display: flex;
