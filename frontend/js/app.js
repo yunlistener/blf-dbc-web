@@ -609,7 +609,7 @@ function makePlotOpts(p) {
     scales,
     axes,
     cursor: {
-      x: true, y: true,
+      x: true, y: false,     // 只保留竖直标线(同步/读数不需要横线)
       stroke: "#7dd3fc", width: 1, dash: [4, 3],
       move: (u, x, y) => {
         onCursorMove(u, x, y);
@@ -654,7 +654,18 @@ function makePlotOpts(p) {
         if (state.anchorT != null) {
           const px = u.valToPos(state.anchorT, "x", true);
           if (px != null && isFinite(px)) {
-            ctx.fillStyle = "#ffd75e";
+            // 红色竖线贯穿整个窗口(所有示波器同步,draw hook 每窗口都执行)
+            ctx.strokeStyle = "#ff4d4d";
+            ctx.globalAlpha = 0.8;
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([4, 3]);
+            ctx.beginPath();
+            ctx.moveTo(px, 0);
+            ctx.lineTo(px, u.bbox.height);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            // 顶部三角(红)
+            ctx.fillStyle = "#ff4d4d";
             ctx.globalAlpha = 0.95;
             ctx.beginPath();
             ctx.moveTo(px - 4, 0);
