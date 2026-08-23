@@ -8,8 +8,10 @@ const state = {
   blf: null,
   dbc: null,
   stats: null,
-  signals: [],       // 已选信号 [{frame_id, signal, unit, color, slot, data, channel, dbc}]
-  uplot: null,
+  signals: [],       // 已选信号 [{frame_id, signal, unit, color, slot, data, channel, dbc, plotId}]
+  plots: [],         // 坐标系 [{id, el, canvasEl, uplot, sigs: [...]}]
+  plotSeq: 1,        // 下一个坐标系 ID
+  xRange: null,      // 时间轴同步范围(缩放后 {min, max});null = 自动
   trace: { frameId: null, channel: null, offset: 0, limit: 200, search: null, range: null },
   config: {},        // 工程配置(总线/波特率/文件/通道映射)
   channels: [],      // [{channel, frames, dbc, messages}]
@@ -33,6 +35,8 @@ function fmtVal(v) {
   return String(v);
 }
 window.addEventListener("error", (e) => {
+  // 忽略 ResizeObserver 良性循环警告(浏览器自动重调度,非真实错误)
+  if (e.message && e.message.includes("ResizeObserver loop")) return;
   const stack = (e.error && e.error.stack || "").split("\n")[1] || "";
   showTip("JS错误: " + e.message + " " + stack.trim());
 });
@@ -159,19 +163,22 @@ function showCursorTipAt(x, y, html) {
 /* 更新已选信号列的值(不弹 tooltip) */
 function updateSigVals(u, x) {
   const idx = u.posToIdx(x);
-  state.signals.forEach(s => {
-    const v = u.data[s.slot] ? u.data[s.slot][idx] : null;
+  const p = state.plots.find(pp => pp.uplot === u);
+  if (!p) return;
+  p.sigs.forEach((s, i) => {
+    const v = u.data[i + 1] ? u.data[i + 1][idx] : null;
     const valEl = document.getElementById(`sigval-${s.slot}`);
     if (valEl) valEl.textContent = fmtSigValUnit(s, v);
   });
 }
 
-/* 光标移动:更新信号列值 + 显示 tooltip(时间 + 所有信号值) */
+/* 光标移动:更新信号列值 + 显示 tooltip(时间 + 本坐标系信号值) */
 function onCursorMove(u, x, y) {
   updateSigVals(u, x);
   const t = u.posToVal(x, "x");
   state.lastCursorT = t;   // 记录最后光标时刻(信号行 tooltip 用)
   const idx = u.posToIdx(x);
+  const p = state.plots.find(pp => pp.uplot === u);
   const rows = [`<div class="tip-row">时间 <b>${t.toFixed(3)} s</b></div>`];
   // 双点测量:锚点存在时显示 Δt 与频率
   if (state.anchorT != null) {
@@ -179,8 +186,8 @@ function onCursorMove(u, x, y) {
     rows.push(`<div class="tip-row" style="color:#ffd75e">锚点 ${state.anchorT.toFixed(3)}s · Δ <b>${dt >= 0 ? "+" : ""}${dt.toFixed(3)} s</b>` +
       (dt !== 0 ? ` (${(1 / Math.abs(dt)).toFixed(2)} Hz)` : "") + `</div>`);
   }
-  state.signals.forEach(s => {
-    const v = u.data[s.slot] ? u.data[s.slot][idx] : null;
+  if (p) p.sigs.forEach((s, i) => {
+    const v = u.data[i + 1] ? u.data[i + 1][idx] : null;
     rows.push(`<div class="tip-row"><span class="dot" style="background:${s.color}"></span>` +
       `${s.signal}: <b>${fmtSigVal(s, v)}</b><span class="u">${s.unit || ""}</span>${ecuTagHtml(s)}</div>`);
   });
@@ -213,7 +220,7 @@ function showSigRowTip(s, el) {
   showCursorTipAt(rect.right + 8, rect.top, html);
 }
 
-/* 左侧已选信号列:颜色标记 + 信号名 + 当前值 + 移除 */
+/* 左侧已选信号列:颜色标记 + 信号名 + 当前值 + 坐标系分配 + 移除 */
 function renderSigSidebar() {
   const box = document.getElementById("sig-sidebar");
   if (!state.signals.length) {
@@ -221,12 +228,17 @@ function renderSigSidebar() {
       <div class="hint" style="padding:8px;font-size:11px">点击左侧信号树选择</div>`;
     return;
   }
+  // 坐标系列表(来自所有已选信号的 plotId 并集,含新信号未渲染的)
+  const plotIds = [...new Set(state.signals.map(s => s.plotId))].sort((a, b) => a - b);
+  const plotOptions = pid => plotIds.map(x =>
+    `<option value="${x}" ${x === pid ? "selected" : ""}>坐标系 ${x}</option>`).join("");
   box.innerHTML = `<div class="sig-sidebar-title">已选信号 (${state.signals.length}/${MAX_SERIES})</div>` +
     state.signals.map(s => `
       <div class="sig-sidebar-row" id="sigrow-${s.slot}">
         <span class="dot" style="background:${s.color}"></span>
         <span class="sname" title="${s.signal}">${s.signal}</span>
         <span class="sval" id="sigval-${s.slot}">—</span>
+        <select class="plot-sel" title="显示在哪个坐标系" onchange="moveSignalToPlot(${s.slot}, this.value)">${plotOptions(s.plotId)}</select>
         <span class="srm" title="移除" onclick="removeSignal(${s.slot})">✕</span>
       </div>`).join("");
   // 行 hover → tooltip 显示信号详情
@@ -249,10 +261,17 @@ function removeSignal(slot) {
       el.classList.remove("active");
     }
   });
-  if (state.uplot) state.uplot.setSeries(slot, { show: false });
   saveSelectedSignals();   // 持久化:刷新后恢复
-  draw();
+  draw();   // syncPlots 会自动移除空坐标系
   if (currentTab() === "sigstats") loadSigStats();
+}
+
+/* 将信号移动到指定坐标系 */
+function moveSignalToPlot(slot, pid) {
+  const s = state.signals.find(x => x.slot === slot);
+  if (!s) return;
+  s.plotId = parseInt(pid, 10);
+  draw();
 }
 
 /* 已选信号持久化(localStorage,含 blf 名防止跨文件误恢复) */
@@ -293,96 +312,134 @@ async function restoreSelectedSignals() {
   }
 }
 
+/* ============ 多坐标系示波器(CANoe 式) ============ */
 function draw() {
-  const u = state.uplot;
-  const el = document.getElementById("plot-wrap");
-  renderSigSidebar();   // 左侧已选信号列
+  renderSigSidebar();   // 左侧已选信号列(含坐标系分配下拉)
   if (!state.signals.length) {
-    if (u) {
-      for (let i = 1; i <= MAX_SERIES; i++) u.setSeries(i, { show: false });
-      u.setData([[], ...Array(MAX_SERIES).fill([])]);
-    }
+    state.plots.forEach(p => { if (p.uplot) p.uplot.destroy(); p.el.remove(); });
+    state.plots = [];
     hideCursorTip();
     return;
   }
-  // 时间轴对齐
+  syncPlots();
+}
+
+/* 按坐标系分组并同步所有 plot 实例 */
+function syncPlots() {
+  const wrap = document.getElementById("plot-wrap");
+  const groups = new Map();
+  for (const s of state.signals) {
+    if (s.plotId == null) s.plotId = state.plotSeq++;   // 默认每信号一个坐标系
+    if (!groups.has(s.plotId)) groups.set(s.plotId, []);
+    groups.get(s.plotId).push(s);
+  }
+  const ids = [...groups.keys()].sort((a, b) => a - b);
+  const keep = new Set(ids);
+  // 销毁消失的坐标系
+  state.plots = state.plots.filter(p => {
+    if (!keep.has(p.id)) { if (p.uplot) p.uplot.destroy(); p.el.remove(); return false; }
+    return true;
+  });
+  // 创建缺失的坐标系容器
+  ids.forEach(id => {
+    let p = state.plots.find(x => x.id === id);
+    if (!p) {
+      const el = document.createElement("div");
+      el.className = "plot-item";
+      const title = document.createElement("div");
+      title.className = "plot-title";
+      el.appendChild(title);
+      const canvasEl = document.createElement("div");
+      canvasEl.className = "plot-canvas";
+      el.appendChild(canvasEl);
+      wrap.appendChild(el);
+      p = { id, el, canvasEl, uplot: null, title };
+      state.plots.push(p);
+    }
+    p.sigs = groups.get(id);
+  });
+  state.plots.forEach(p => updatePlotData(p));
+}
+
+/* 单个坐标系的数据与实例 */
+function updatePlotData(p) {
+  const sigs = p.sigs;
+  // 标题:色点 + 信号名
+  p.title.innerHTML = sigs.map(s =>
+    `<span class="pt-dot" style="background:${s.color}"></span><span>${s.signal}${s.unit ? " (" + s.unit + ")" : ""}</span>`).join("");
+  // x 轴:本坐标系内信号时间并集
   const xSet = new Set();
-  for (const s of state.signals) for (const t of s.data.times) xSet.add(t);
+  for (const s of sigs) for (const t of s.data.times) xSet.add(t);
   const x = Array.from(xSet).sort((a, b) => a - b);
   const per = {};
-  for (const s of state.signals) {
+  sigs.forEach((s, i) => {
     const v = new Array(x.length).fill(null);
     const t = s.data.times;
     let j = 0;
-    for (let i = 0; i < x.length; i++) {
-      while (j < t.length && t[j] < x[i]) j++;
-      if (j < t.length && t[j] === x[i]) {
+    for (let k = 0; k < x.length; k++) {
+      while (j < t.length && t[j] < x[k]) j++;
+      if (j < t.length && t[j] === x[k]) {
         const raw = s.data.values[j];
         // 值表信号 decode 返回 {name, value} 对象 → 取 value 数值画线
-        v[i] = (raw != null && typeof raw === "object" && "value" in raw) ? raw.value : raw;
+        v[k] = (raw != null && typeof raw === "object" && "value" in raw) ? raw.value : raw;
       }
     }
-    per[s.slot] = v;
-  }
-  if (!u) {
-    state.uplot = new uPlot(
-      makeUplotOpts(),
-      [x, ...Array(MAX_SERIES).fill([])],
-      el);
-    // 强制 canvas 物理尺寸 = 逻辑尺寸 × pxRatio(修正创建时 canvas 尺寸异常的问题)
-    const cv = el.querySelector("canvas");
+    per[i + 1] = v;
+  });
+  const data = [x, ...sigs.map((_, i) => per[i + 1] || [])];
+  if (!p.uplot) {
+    p.uplot = new uPlot(makePlotOpts(p), data, p.canvasEl);
+    // 强制 canvas 物理尺寸 = 逻辑尺寸 × pxRatio(修正创建时 canvas 尺寸异常)
+    const cv = p.canvasEl.querySelector("canvas");
     if (cv) {
-      cv.width = Math.round(state.uplot.width * uPlot.pxRatio);
-      cv.height = Math.round(state.uplot.height * uPlot.pxRatio);
-      cv.style.width = state.uplot.width + "px";
-      cv.style.height = state.uplot.height + "px";
+      cv.width = Math.round(p.uplot.width * uPlot.pxRatio);
+      cv.height = Math.round(p.uplot.height * uPlot.pxRatio);
+      cv.style.width = p.uplot.width + "px";
+      cv.style.height = p.uplot.height + "px";
     }
-    state.uplot.redraw();
+    p.uplot.redraw();
+  } else {
+    p.uplot.setData(data);
   }
-  // 每次绘制都同步系列显示配置(新加入的信号可能晚于创建)
-  state.signals.forEach(s => applySeries(s));
-  const data = [x];
-  for (let i = 1; i <= MAX_SERIES; i++) data.push(per[i] || []);
-  state.uplot.setData(data);
-  // 注:不再手动赋值 scale 范围(uPlot 全自动:setData 后 x/y auto 计算;
-  // 缩放走 setScale,手动赋值会绕过其状态管理导致滚轮/框选失效)
-  // 手动刷新已选信号列的值(不弹 tooltip;bbox 是物理像素,除以 pxRatio 转 CSS)
-  const b = state.uplot.bbox;
+  // 恢复时间同步范围
+  if (state.xRange) p.uplot.setScale("x", state.xRange);
+  // 刷新本坐标系信号的已选列值
+  const b = p.uplot.bbox;
   const pxr = uPlot.pxRatio || 1;
-  updateSigVals(state.uplot, b.width / pxr / 2);
+  updateSigVals(p.uplot, b.width / pxr / 2);
 }
 
-/* 更新/隐藏某个系列槽位的显示配置 */
-function applySeries(s) {
-  const u = state.uplot;
-  if (!u) return;
-  const sl = u.series[s.slot];
-  if (!sl) return;
-  // 注意:uPlot 的 setSeries() 只处理 show/focus,其他字段必须直接操作 series 对象;
-  // stroke/points.show 等绘制时被当作函数调用,必须用函数形式
-  sl.show = true;
-  sl.label = s.signal;
-  sl.stroke = () => s.color;
-  sl.scale = "y";
-  sl.auto = true;
-  sl.width = 1.5;
-  if (sl.points) sl.points.show = () => false;
+/* 时间轴同步:任一坐标系缩放/平移 → 广播到所有坐标系 */
+let syncingX = false;
+function broadcastX(u, min, max) {
+  if (syncingX) return;
+  syncingX = true;
+  state.xRange = { min, max };
+  state.plots.forEach(p => {
+    if (p.uplot && p.uplot !== u) p.uplot.setScale("x", { min, max });
+  });
+  syncingX = false;
 }
 
-function makeUplotOpts() {
-  const el = document.getElementById("plot-wrap");
+/* 单个坐标系的 uPlot 配置 */
+function makePlotOpts(p) {
+  const sigs = p.sigs;
+  const withU = state.plots.filter(x => x.uplot);
+  const isLast = p.id === Math.max(...withU.map(x => x.id));
   return {
-    width: Math.max(200, el.clientWidth - 16),   // 防止窄窗口下宽度为负
-    height: Math.max(200, el.clientHeight - 16),
+    width: Math.max(200, p.canvasEl.clientWidth - 8),
+    height: Math.max(100, p.canvasEl.clientHeight - 4),
     legend: { show: false },
-    // 槽位 series 显式挂到 y scale 并参与 auto 计算(否则只算第一个信号,其它曲线消失)
-    series: [{}, ...Array.from({ length: MAX_SERIES }, () => ({ show: false, scale: "y", auto: true }))],
+    series: [{}, ...sigs.map(s => ({
+      show: true, label: s.signal, stroke: () => s.color,
+      scale: "y", auto: true, width: 1.5,
+      points: { show: () => false },
+    }))],
     scales: {
-      x: { time: false },   // auto 保持默认,由数据自动确定范围
+      x: { time: false },   // auto 由数据确定;缩放走 setScale + broadcastX
       y: {
         auto: true,
-        // 信号恒为同一值(如一直为 0)时 y 范围零跨度 → 扩开一格,否则画不出线。
-        // ⚠️ range 必须返回数组(uPlot 内部直接 e[0]/e[1],返回 null 会崩)
+        // 恒值信号零跨度扩开;⚠️ range 必须返回数组(返回 null 会崩)
         range: (u, dataMin, dataMax) => {
           if (dataMin == null || !isFinite(dataMin)) return [0, 1];
           if (dataMin === dataMax) return [dataMin - 1, dataMax + 1];
@@ -392,13 +449,13 @@ function makeUplotOpts() {
       },
     },
     axes: [
-      { stroke: "#8a93a3", grid: { stroke: "#242830", width: 1 },
+      // x 轴:只在最后一个坐标系显示(避免重复刻度)
+      { show: isLast, stroke: "#8a93a3", grid: { stroke: "#242830", width: 1 },
         ticks: { stroke: "#3a4150" }, font: "11px ui-monospace, Menlo",
         values: (u, vals) => vals.map(v => v.toFixed(2) + "s") },
       { stroke: "#8a93a3", grid: { stroke: "#242830", width: 1 },
         ticks: { stroke: "#3a4150" }, font: "11px ui-monospace, Menlo", size: 58 },
     ],
-    series: [{}, ...Array(MAX_SERIES).fill({ show: false })],
     cursor: {
       x: true, y: true,
       stroke: "#7dd3fc", width: 1, dash: [4, 3],
@@ -412,6 +469,7 @@ function makeUplotOpts() {
       setSelect: [(u) => {
         const { min, max } = u.select;
         u.setScale("x", { min, max });
+        broadcastX(u, min, max);
       }],
       ready: [(u) => {
         u.over.addEventListener("wheel", (e) => {
@@ -425,19 +483,20 @@ function makeUplotOpts() {
               max: cx + (max - cx) * factor,
             });
           });
+          const { min, max } = u.scales.x;
+          broadcastX(u, min, max);
         }, { passive: false });
         u.over.addEventListener("mouseleave", hideCursorTip);   // 移出图表 → 隐藏 tooltip
         // 双点测量:点击设置/清除锚点(黄色三角标记,移动光标显示 Δt)
         u.over.addEventListener("click", (e) => {
           state.anchorT = (state.anchorT == null) ? u.posToVal(e.offsetX, "x") : null;
-          u.redraw();
+          state.plots.forEach(pp => { if (pp.uplot) pp.uplot.redraw(); });
         });
       }],
-      // 抖动峰值时间点 → 时间轴顶部三角标记(受配置开关控制)
+      // 时间轴顶部标记:测量锚点(黄)+ 本坐标系信号的抖动峰值
       draw: [(u) => {
         const ctx = u.ctx;
         ctx.save();
-        // 测量锚点(黄色)
         if (state.anchorT != null) {
           const px = u.valToPos(state.anchorT, "x", true);
           if (px != null && isFinite(px)) {
@@ -450,9 +509,11 @@ function makeUplotOpts() {
             ctx.fill();
           }
         }
-        // 抖动峰值标记(信号色)
         if (showJitterMarks() && state.jitterMarks && state.jitterMarks.length) {
+          const p = state.plots.find(pp => pp.uplot === u);
+          const sigNames = new Set((p ? p.sigs : []).map(s => s.signal));
           state.jitterMarks.forEach(m => {
+            if (!sigNames.has(m.signal)) return;
             const px = u.valToPos(m.t, "x", true);
             if (px == null || !isFinite(px)) return;
             ctx.fillStyle = m.color;
@@ -479,7 +540,7 @@ function showJitterMarks() {
 function onJitterMarkToggle() {
   localStorage.setItem("jitterMarks",
     document.getElementById("cfg-jitter-mark").checked ? "1" : "0");
-  if (state.uplot) state.uplot.redraw();
+  state.plots.forEach(p => { if (p.uplot) p.uplot.redraw(); });
 }
 
 async function toggleConfigDrawer() {
@@ -495,22 +556,23 @@ async function toggleConfigDrawer() {
 }
 
 function resizeChart() {
-  if (!state.uplot) return;
-  const el = document.getElementById("plot-wrap");
-  const w = Math.max(200, el.clientWidth - 16);
-  const h = Math.max(200, el.clientHeight - 16);
-  state.uplot.setSize({ width: w, height: h });
-  // 高 DPI 修正:setSize 后手动同步 canvas 物理尺寸(否则 canvas 不跟随容器,
-  // 抽屉展开时曲线区域不收缩,溢出部分被抽屉盖住,看起来像覆盖)
-  const cv = el.querySelector("canvas");
-  if (cv) {
-    const pxr = uPlot.pxRatio || 1;
-    cv.width = Math.round(w * pxr);
-    cv.height = Math.round(h * pxr);
-    cv.style.width = w + "px";
-    cv.style.height = h + "px";
-  }
-  state.uplot.redraw();
+  if (!state.plots.length) return;
+  const wrap = document.getElementById("plot-wrap");
+  const w = Math.max(200, wrap.clientWidth - 16);
+  state.plots.forEach(p => {
+    if (!p.uplot) return;
+    const h = Math.max(80, p.el.clientHeight - 26);   // 减标题高度
+    p.uplot.setSize({ width: w, height: h });
+    // 高 DPI 修正:setSize 后手动同步 canvas 物理尺寸
+    const cv = p.canvasEl.querySelector("canvas");
+    if (cv) {
+      const pxr = uPlot.pxRatio || 1;
+      cv.width = Math.round(w * pxr);
+      cv.height = Math.round(h * pxr);
+      cv.style.width = w + "px";
+      cv.style.height = h + "px";
+    }
+  });
 }
 
 function drawerOpen() {
@@ -649,7 +711,10 @@ async function loadFiles() {
 
   // 重置分析状态(文件可能已切换)
   state.signals = [];
-  if (state.uplot) { state.uplot.destroy(); state.uplot = null; }
+  state.plots.forEach(p => { if (p.uplot) p.uplot.destroy(); });
+  state.plots = [];
+  state.plotSeq = 1;
+  state.xRange = null;
   document.getElementById("plot-wrap").innerHTML = "";
   hideCursorTip();
   document.getElementById("busload-box").dataset.loaded = "";   // 文件切换 → Bus Load 重新加载
@@ -889,8 +954,8 @@ async function toggleSignal(msg, signal, item, channel) {
   if (existing) {
     state.signals = state.signals.filter(s => s !== existing);
     item.classList.remove("active");
-    if (state.uplot) state.uplot.setSeries(existing.slot, { show: false });
-    draw();
+    saveSelectedSignals();
+    draw();   // syncPlots 自动销毁空坐标系
     return;
   }
   if (state.signals.length >= MAX_SERIES) {
@@ -942,7 +1007,7 @@ async function toggleSignal(msg, signal, item, channel) {
   // 槽位分配须与 push 同步完成(避免并发请求拿到相同槽位)
   const usedSlots = new Set(state.signals.map(s => s.slot));
   const slot = [1, 2, 3, 4, 5, 6].find(i => !usedSlots.has(i));
-  state.signals.push({ frame_id: msg.frame_id, signal, unit, color, slot, data, channel, dbc, choices, comment, senders });
+  state.signals.push({ frame_id: msg.frame_id, signal, unit, color, slot, data, channel, dbc, choices, comment, senders, plotId: state.plotSeq++ });   // 默认每信号一个坐标系
   saveSelectedSignals();   // 持久化:刷新后恢复
   draw();
   // 信号统计 tab 已打开时,新选信号要刷新统计
@@ -961,9 +1026,10 @@ document.getElementById("btn-export").onclick = () => {
     frame_id: "0x" + s.frame_id.toString(16),
     channel: String(s.channel),
   });
-  // 缩放区间导出:示波器有缩放时,只导出当前 x 轴范围
-  if (state.uplot) {
-    const sx = state.uplot.scales.x;
+  // 缩放区间导出:示波器有缩放时,只导出当前 x 轴范围(时间同步,取任一坐标系)
+  const p0 = state.plots.find(x => x.uplot);
+  if (p0) {
+    const sx = p0.uplot.scales.x;
     if (sx.min != null && sx.max != null) {
       q.set("start", String(sx.min));
       q.set("end", String(sx.max));
@@ -974,10 +1040,12 @@ document.getElementById("btn-export").onclick = () => {
 };
 
 document.getElementById("btn-reset").onclick = () => {
-  if (state.signals.length && state.uplot) {
-    const x = state.uplot.data[0];
-    state.uplot.setScale("x", { min: x[0], max: x[x.length - 1] });
-  }
+  state.xRange = null;
+  state.plots.forEach(p => {
+    if (!p.uplot) return;
+    const x = p.uplot.data[0];
+    if (x && x.length) p.uplot.setScale("x", { min: x[0], max: x[x.length - 1] });
+  });
 };
 // 用 ResizeObserver 观察图表容器:抽屉/信号树展开动画期间容器宽度逐帧变化,
 // canvas 同步逐帧跟随 → 收缩丝滑无跳变(uPlot setSize 轻量,小数据无压力)
@@ -1062,8 +1130,9 @@ function clearTraceSearch() {
 
 /* 按示波器当前缩放区间过滤 Trace(读取 uPlot x 轴范围) */
 function applyTraceRange() {
-  if (!state.uplot) { showTip("请先在示波器上缩放出区间"); return; }
-  const sx = state.uplot.scales.x;
+  const p0 = state.plots.find(x => x.uplot);
+  if (!p0) { showTip("请先在示波器上缩放出区间"); return; }
+  const sx = p0.uplot.scales.x;
   if (sx.min == null || sx.max == null) { showTip("请先在示波器上缩放出区间"); return; }
   state.trace.range = { start: sx.min, end: sx.max };
   state.trace.offset = 0;
@@ -1243,9 +1312,9 @@ async function loadSigStats() {
           `&frame_id=0x${s.frame_id.toString(16)}&channel=${s.channel}`);
         msgCache[s.frame_id] = cs;
       }
-      // 抖动峰值时间点 → 示波器 x 轴标记
+      // 抖动峰值时间点 → 示波器 x 轴标记(记录信号名,按坐标系过滤)
       if (cs.jitter_max_at != null) {
-        state.jitterMarks.push({ t: cs.jitter_max_at - state.t0, color: s.color });
+        state.jitterMarks.push({ t: cs.jitter_max_at - state.t0, color: s.color, signal: s.signal });
       }
       rows.push({ s, st, cs });
     }
@@ -1293,7 +1362,7 @@ async function loadSigStats() {
     html += `</tbody></table>`;
     box.innerHTML = html;
     // 抖动峰值标记已更新 → 重绘示波器
-    if (state.uplot) state.uplot.redraw();
+    state.plots.forEach(p => { if (p.uplot) p.uplot.redraw(); });
   } catch (e) {
     box.innerHTML = `<div class="hint">加载失败: ${e.message}</div>`;
   }
