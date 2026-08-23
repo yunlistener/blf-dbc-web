@@ -441,16 +441,15 @@ function updatePlotData(p) {
         v[k] = (raw != null && typeof raw === "object" && "value" in raw) ? raw.value : raw;
       }
     }
-    // 值表信号前向填充:null 间隙用上一采样值填充(状态保持到下一采样)。
-    // 稀疏采样与密集信号共用时间轴时,值表信号大量位置是 null,uPlot 折线遇 null 断线,
-    // 孤立采样点连不成线导致整条线不渲染;前向填充后 linear 折线呈现连续阶梯状。
-    if (s.choices) {
-      s._sampleIdx = new Set();   // 记录实际采样位置(供采样点标记用)
-      let last = null;
-      for (let k = 0; k < v.length; k++) {
-        if (v[k] != null) { last = v[k]; s._sampleIdx.add(k); }
-        else if (last != null) v[k] = last;
-      }
+    // 前向填充 null:同窗信号时间戳浮点不重合(如 0.712612 vs 0.7126119999),
+    // 并集翻倍 → per 数组"值/null/值/null"交错 → uPlot 折线每两点断一次,
+    // 只剩断线段(视觉=点阵)。所有信号前向填充后线连续(值保持到下一采样,
+    // 100Hz 同频间隙 10ms 视觉无感);值表信号另记实际采样位置供点标记。
+    if (s.choices) s._sampleIdx = new Set();
+    let last = null;
+    for (let k = 0; k < v.length; k++) {
+      if (v[k] != null) { last = v[k]; if (s.choices) s._sampleIdx.add(k); }
+      else if (last != null) v[k] = last;
     }
     per[i + 1] = v;
   });
