@@ -570,8 +570,10 @@ function createPlotChart(p) {
     p.syncX = null;
     p.chart.update("none");
   });
-  // 滚轮缩放(限窗 + 全窗口同步;播放中禁用)
+  // 滚轮:Ctrl+滚轮 = 缩放(限窗 + 全窗口同步);普通滚轮 = 页面默认滚动
+  // (多个示波器时普通滚动方便上下翻页,不会误缩放)
   holder.addEventListener("wheel", e => {
+    if (!e.ctrlKey) return;   // 不拦截 → 页面正常滚动
     e.preventDefault();
     if (playState.playing) return;
     const xa = chart.scales.x;
@@ -712,10 +714,10 @@ function onPlotHover(p, e) {
   const t = xa.getValueForPixel(e.x);
   if (t == null || !isFinite(t)) return;
   state.lastCursorT = t;
-  // 已选信号列读数(每个信号取最近点)
-  const rows = [];
-  p.sigs.forEach(s => {
-    const ds = p.chart.data.datasets.find(d => d.label === s.signal);
+  // 所有已选信号读数(跨示波器):从各自所在窗口的 dataset 取最近值,时间同步
+  state.signals.forEach(s => {
+    const pp = state.plots.find(x => x.id === s.plotId);
+    const ds = (pp && pp.chart) ? pp.chart.data.datasets.find(d => d.label === s.signal) : null;
     const val = ds ? nearestVal(ds, t) : null;
     const valEl = document.getElementById(`sigval-${s.slot}`);
     if (valEl) valEl.textContent = fmtSigValUnit(s, val);
@@ -756,6 +758,12 @@ function resizeChart() {
 
 function drawerOpen() {
   return document.getElementById("config-drawer").classList.contains("open");
+}
+
+/* 右侧配置抽屉展开/收起(点击边缘把手;展开时挤压主区域) */
+function toggleConfigDrawer() {
+  document.getElementById("config-drawer").classList.toggle("open");
+  setTimeout(resizeChart, 280);   // 主区域宽度变化 → 同步图表
 }
 
 /* 左侧信号树展开/收起(与右侧配置抽屉对称) */
