@@ -252,8 +252,16 @@ function removeSignalFromPlot(plotId, slot) {
     });
   }
   saveSelectedSignals();   // 持久化
+  clearPlayDataFor(s);     // 清理该信号播放累积(防删加后播放残留)
   draw();                  // 重建:目标窗口信号移除,自动重算 y 范围
   if (currentTab() === "sigstats") loadSigStats();
+}
+
+/* 清理某信号的播放累积数据(删除/重加时防残留) */
+function clearPlayDataFor(s) {
+  if (!s) return;
+  const key = `${s.frame_id}|${s.channel}|${s.signal}`;
+  delete playState.data[key];
 }
 
 /* 从已选列表移除信号 */
@@ -273,6 +281,7 @@ function removeSignal(slot) {
     });
   }
   saveSelectedSignals();   // 持久化:刷新后恢复
+  clearPlayDataFor(s);     // 清理该信号播放累积
   draw();   // syncPlots 会自动移除空示波器
   if (currentTab() === "sigstats") loadSigStats();
 }
@@ -430,7 +439,10 @@ function makeOverlayPlugin(p) {
       const ctx = chart.ctx;
       const xa = chart.scales.x;
       if (!xa) return;
-      const top = xa.top, bottom = xa.bottom;
+      // ⚠️ 用 chartArea(绘图区)而非 scales.x.top/bottom:
+      // scales.x.top 是 x 轴顶部(偏下),导致竖线上面缺一截
+      const top = chart.chartArea ? chart.chartArea.top : xa.top;
+      const bottom = chart.chartArea ? chart.chartArea.bottom : xa.bottom;
       // 同步竖线(浅蓝虚线,鼠标所在窗口 + 跟随窗口)
       if (p.syncX != null) {
         const px = xa.getPixelForValue(p.syncX);
@@ -1701,6 +1713,7 @@ function stopPlayback() {
   state.xRange = null;
   cancelAnimationFrame(playRaf);
   playState.renderPending = false;
+  playState.data = {};      // 停止 → 清空播放累积(下次播放全新开始)
   restoreStaticData();      // 停止 → 恢复静态全量曲线
   draw();
   updatePlayUI();
@@ -1818,6 +1831,8 @@ function pausePlayOnSignalChange() {
 init().catch(e => {
   document.getElementById("tree-hint").textContent = "加载失败: " + e.message;
 });
+
+
 
 
 
