@@ -262,14 +262,8 @@ body {
 .plot-title .pt-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .plot-canvas { flex: 1; min-height: 0; position: relative; }
 
-/* Lightweight Charts 渲染层 */
-.lwc-holder { position: absolute; inset: 0; }
-.lwc-anchor { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 5; }
-.lwc-anchor-line { position: absolute; top: 0; bottom: 0; width: 0;
-  border-left: 1.5px dashed #ff4d4d; opacity: .85; }
-.lwc-jitter { position: absolute; top: 0; width: 0; height: 0;
-  border-left: 4px solid transparent; border-right: 4px solid transparent;
-  border-top: 7px solid #fff; transform: translateX(-4px); opacity: .9; }
+/* Chart.js 渲染层 */
+.chartjs-holder { position: absolute; inset: 0; }
 
 /* 光标 tooltip:示波器/已选信号 hover 时显示读数 */
 .cursor-tip {
