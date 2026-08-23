@@ -1,6 +1,12 @@
 /* CANoe 风格前端逻辑:文件 → 报文树 → 多信号曲线 → Trace → 统计 */
 "use strict";
 
+// 版本号:自动从 app.js 的 ?v=N 参数读取(与缓存版本号一致,只维护 index.html 一处)
+const APP_VERSION = (document.currentScript && document.currentScript.src.match(/[?&]v=(\d+)/) || [])[1] || "?";
+// 页头显示版本号(script 在 body 底部,DOM 已就绪)
+const _verEl = document.getElementById("app-version");
+if (_verEl) _verEl.textContent = "v" + APP_VERSION;
+
 const PALETTE = ["#4da3ff", "#ffb84d", "#5ad47a", "#ff6b6b", "#c77dff",
                  "#4dd6c8", "#f472b6", "#a3e635", "#fb923c", "#60a5fa",
                  "#fda4af", "#93c5fd", "#c4b5fd", "#86efac", "#fcd34d",

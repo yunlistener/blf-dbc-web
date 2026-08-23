@@ -21,7 +21,12 @@ body {
   background: #1e2128;
   border-bottom: 1px solid #2b2f38;
 }
-.logo { font-weight: 700; font-size: 15px; color: #4da3ff; letter-spacing: .5px; }
+.logo { font-weight: 700; font-size: 15px; color: #e8ecf2; letter-spacing: 1px; }
+.app-version {
+  font-size: 11px; font-weight: 600; color: #5ad47a;
+  background: rgba(90, 212, 122, .15); border: 1px solid rgba(90, 212, 122, .35);
+  border-radius: 3px; padding: 1px 6px; margin-left: 8px; vertical-align: 2px;
+}
 .file-chip {
   background: #262a33;
   border: 1px solid #333947;
