@@ -668,13 +668,41 @@ document.getElementById("btn-reset").onclick = () => {
     state.uplot.setScale("x", { min: x[0], max: x[x.length - 1] });
   }
 };
-// 用 ResizeObserver 观察图表容器:抽屉展开动画期间容器宽度逐帧变化,
+// 用 ResizeObserver 观察图表容器:抽屉/信号树展开动画期间容器宽度逐帧变化,
 // canvas 同步逐帧跟随 → 收缩丝滑无跳变(uPlot setSize 轻量,小数据无压力)
 if ("ResizeObserver" in window) {
   const ro = new ResizeObserver(() => resizeChart());
-  ro.observe(document.getElementById("chart"));
+  ro.observe(document.getElementById("plot-wrap"));
 }
 window.addEventListener("resize", () => resizeChart());   // 整窗缩放兜底
+
+/* 已选信号列宽度拖拽调整 */
+(function initSigResizer() {
+  const resizer = document.getElementById("sig-resizer");
+  const sidebar = document.getElementById("sig-sidebar");
+  let drag = null;
+  resizer.addEventListener("mousedown", (e) => {
+    drag = { startX: e.clientX, startW: sidebar.offsetWidth };
+    resizer.classList.add("dragging");
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    e.preventDefault();
+  });
+  window.addEventListener("mousemove", (e) => {
+    if (!drag) return;
+    const w = Math.max(80, Math.min(320, drag.startW + (e.clientX - drag.startX)));
+    sidebar.style.width = w + "px";
+    // plot-wrap 宽度被 ResizeObserver 感知 → 曲线自动跟随
+  });
+  window.addEventListener("mouseup", () => {
+    if (!drag) return;
+    drag = null;
+    resizer.classList.remove("dragging");
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+    resizeChart();   // 兜底:确保曲线尺寸对齐
+  });
+})();
 
 /* ---------- Trace 表格 ---------- */
 function onTraceMsgChange() {

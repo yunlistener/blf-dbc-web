@@ -158,6 +158,15 @@ body {
   flex: none; cursor: pointer; color: #5c6472; padding: 0 2px;
 }
 .sig-sidebar-row .srm:hover { color: #ff6b6b; }
+
+/* 信号列宽度拖拽手柄 */
+#sig-resizer {
+  width: 5px; flex: none; cursor: col-resize;
+  background: transparent; border-radius: 2px;
+  transition: background .15s;
+}
+#sig-resizer:hover, #sig-resizer.dragging { background: #4da3ff; }
+
 #plot-wrap { flex: 1; min-width: 0; }
 
 /* 光标读数面板 */
