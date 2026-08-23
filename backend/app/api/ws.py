@@ -46,19 +46,29 @@ async def _pump(ws: WebSocket, engine: PlaybackEngine, st: dict) -> None:
                 pass
             return
         play_t = _current_play_t(st)
-        batch = engine.advance_to(play_t, BATCH_MAX)
+        try:
+            batch = engine.advance_to(play_t, BATCH_MAX)
+        except Exception as e:
+            import traceback
+            print(f"[ws] advance_to error: {e}")
+            traceback.print_exc()
+            st["playing"] = False
+            return
         if batch is None:
             st["playing"] = False
             try:
                 await ws.send_json({"type": "end", "t": st["play_t"]})
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[ws] send end error: {e}")
             return
         st["play_t"] = batch["t1"]
         try:
             await ws.send_json(batch)
             await ws.send_json({"type": "progress", "t": batch["t1"]})
-        except Exception:
+        except Exception as e:
+            import traceback
+            print(f"[ws] pump send error: {e}")
+            traceback.print_exc()
             st["playing"] = False
             return
         await asyncio.sleep(TICK)
@@ -76,6 +86,7 @@ async def replay_ws(ws: WebSocket) -> None:
             mtype = msg.get("type")
 
             if mtype == "config":
+                print(f"[ws] config: blf={msg.get('blf')} signals={len(msg.get('signals', []))}")
                 # 停旧泵,重建会话(源+引擎,按通道 DBC 映射)
                 if pump_task:
                     pump_task.cancel()
@@ -97,6 +108,7 @@ async def replay_ws(ws: WebSocket) -> None:
                                     "rate": 1.0, "t": 0.0, "dur": st["dur"]})
 
             elif mtype == "play" and engine is not None:
+                print(f"[ws] play: rate={msg.get('rate')}")
                 st["rate"] = float(msg.get("rate", 1.0))
                 st["play_t"] = _current_play_t(st)
                 st["wall_start"] = time.monotonic()
