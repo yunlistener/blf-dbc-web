@@ -1633,6 +1633,7 @@ document.getElementById("cfg-blf").addEventListener("change", () => refreshBlfVi
 async function init() {
   try { state.config = await api("/api/config"); } catch (e) { state.config = {}; }
   await loadFiles();
+  connectReplay();   // 预连接播放 WS(避免首次播放的连接延迟/失败)
 }
 
 /* ============ 播放模式(CANoe 式动态回放:后端逐帧解析推送) ============ */
@@ -1735,8 +1736,17 @@ function setPlayRate(r) {
 }
 
 /* 收到后端推送(帧批次 → 累积 → 节流渲染) */
+let _firstBatchT = 0;
 function onReplayMsg(m) {
   if (m.type === "batch") {
+    if (!_firstBatchT) {
+      _firstBatchT = Date.now();
+      // 自检:2 秒后仍无任何数据 → 提示(定位播放失效)
+      setTimeout(() => {
+        const has = Object.values(playState.data).some(d => d.times.length > 0);
+        if (!has && playState.playing) showTip("⚠ 未收到播放数据(WS 或后端订阅异常),请刷新页面重试");
+      }, 2000);
+    }
     for (const [key, d] of Object.entries(m.signals)) {
       if (!playState.data[key]) playState.data[key] = { times: [], values: [] };
       playState.data[key].times.push(...d.times);
