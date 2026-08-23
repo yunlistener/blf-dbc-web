@@ -528,7 +528,7 @@ function createPlotChart(p) {
           bodyColor: "#e2e8f0", borderColor: "#3a4150", borderWidth: 1,
           callbacks: {
             title: items => (items && items[0] ? items[0].parsed.x.toFixed(3) + " s" : ""),
-            label: item => `${item.dataset.label}: ${fmtNum(item.parsed.y)}`,
+            label: item => `${item.dataset.label}: ${fmtVal(item.parsed.y)}`,
           },
         },
       },
@@ -1841,6 +1841,8 @@ function pausePlayOnSignalChange() {
 init().catch(e => {
   document.getElementById("tree-hint").textContent = "加载失败: " + e.message;
 });
+
+
 
 
 
