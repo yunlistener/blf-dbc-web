@@ -275,11 +275,16 @@ def cycle_stats(name: str, dbc: Optional[str] = None, frame_id: str = "",
            "expected_ms": expected_ms, "expected_s": expected_s}
     if len(times) >= 2:
         ivs = [times[i + 1] - times[i] for i in range(len(times) - 1)]
+        max_i = ivs.index(max(ivs))
+        min_i = ivs.index(min(ivs))
         out.update({
             "avg_ms": round(sum(ivs) / len(ivs) * 1000, 3),
             "min_ms": round(min(ivs) * 1000, 3),
             "max_ms": round(max(ivs) * 1000, 3),
             "jitter_ms": round((max(ivs) - min(ivs)) * 1000, 3),   # 峰峰抖动
+            # 抖动峰值出现的时间点(间隔起始帧时间,绝对时间戳,前端转相对)
+            "jitter_max_at": times[max_i],
+            "jitter_min_at": times[min_i],
         })
         if expected_s:
             # 丢帧:间隔超过期望 1.5 倍视为缺帧,按比例推算丢帧数

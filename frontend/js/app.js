@@ -15,6 +15,7 @@ const state = {
   channels: [],      // [{channel, frames, dbc, messages}]
   hasData: null,     // Set<frame_id> 日志中实际出现的报文 ID
   lastCursorT: null, // 最后光标时刻(相对秒,信号行 tooltip 显示用)
+  jitterMarks: [],   // [{t, color}] 抖动峰值时间点(相对秒),示波器 x 轴标记
 };
 
 function showTip(msg) { document.getElementById("st-tip").textContent = msg; }
@@ -380,6 +381,35 @@ function makeUplotOpts() {
           });
         }, { passive: false });
         u.over.addEventListener("mouseleave", hideCursorTip);   // 移出图表 → 隐藏 tooltip
+      }],
+      // 抖动峰值时间点 → 竖直虚线标记(顶部小三角)
+      draw: [(u) => {
+        if (!state.jitterMarks || !state.jitterMarks.length) return;
+        const ctx = u.ctx;
+        ctx.save();
+        ctx.setLineDash([4, 3]);
+        ctx.lineWidth = 1;
+        state.jitterMarks.forEach(m => {
+          const px = u.valToPos(m.t, "x", true);
+          if (px == null || !isFinite(px)) return;
+          ctx.strokeStyle = m.color;
+          ctx.globalAlpha = 0.8;
+          ctx.beginPath();
+          ctx.moveTo(px, 0);
+          ctx.lineTo(px, u.bbox.height);
+          ctx.stroke();
+          // 顶部小三角
+          ctx.setLineDash([]);
+          ctx.fillStyle = m.color;
+          ctx.beginPath();
+          ctx.moveTo(px - 4, 0);
+          ctx.lineTo(px + 4, 0);
+          ctx.lineTo(px, -7);
+          ctx.fill();
+          ctx.setLineDash([4, 3]);
+        });
+        ctx.globalAlpha = 1;
+        ctx.restore();
       }],
     },
   };
@@ -1089,6 +1119,7 @@ async function loadSigStats() {
     return;
   }
   box.innerHTML = `<div class="hint">加载中…</div>`;
+  state.jitterMarks = [];   // 重建抖动峰值标记
   try {
     const ch = state.channels.find(c => c.channel === state.signals[0].channel);
     const dbc = (ch && ch.dbc) || state.signals[0].dbc;
@@ -1102,6 +1133,10 @@ async function loadSigStats() {
         cs = await api(`/api/blf/${state.blf}/cycle-stats?dbc=${encodeURIComponent(dbc)}` +
           `&frame_id=0x${s.frame_id.toString(16)}&channel=${s.channel}`);
         msgCache[s.frame_id] = cs;
+      }
+      // 抖动峰值时间点 → 示波器 x 轴标记
+      if (cs.jitter_max_at != null) {
+        state.jitterMarks.push({ t: cs.jitter_max_at - state.t0, color: s.color });
       }
       rows.push({ s, st, cs });
     }
@@ -1138,13 +1173,15 @@ async function loadSigStats() {
           <td>min</td><td>${cs.min_ms ?? "—"} ms</td><td>max</td><td>${cs.max_ms ?? "—"} ms</td>
         </tr>
         <tr>
-          <td>抖动(峰峰)</td><td class="${(cs.jitter_ms ?? 0) > (cs.expected_ms || 1) * 0.3 ? "warn" : ""}">${cs.jitter_ms ?? "—"} ms</td>
+          <td>抖动(峰峰)</td><td class="${(cs.jitter_ms ?? 0) > (cs.expected_ms || 1) * 0.3 ? "warn" : ""}">${cs.jitter_ms ?? "—"} ms${cs.jitter_max_at != null ? ` <span style="color:#8a93a3">@ ${(cs.jitter_max_at - state.t0).toFixed(3)}s</span>` : ""}</td>
           <td>丢帧</td><td class="${(cs.lost_frames ?? 0) > 0 ? "warn" : ""}">${cs.lost_frames ?? "—"}</td>
           <td>丢帧率</td><td>${cs.lost_pct ?? "—"}%</td><td colspan="2"></td>
         </tr>`;
     }
     html += `</tbody></table>`;
     box.innerHTML = html;
+    // 抖动峰值标记已更新 → 重绘示波器
+    if (state.uplot) state.uplot.redraw();
   } catch (e) {
     box.innerHTML = `<div class="hint">加载失败: ${e.message}</div>`;
   }
