@@ -458,7 +458,16 @@ function updatePlotData(p) {
   if (lo === Infinity) { lo = 0; hi = 1; }
   else if (lo === hi) { lo -= 1; hi += 1; }          // 恒值信号(如全 0)扩开
   else { const pad = (hi - lo) * 0.15; lo -= pad; hi += pad; }
-  p.uplot.setScale("y", { min: lo, max: hi });
+  // ⚠️ y 范围对齐到刻度 step 的倍数:uPlot 刻度从 min 向上取整到 step 倍数,
+  // min 非 step 倍数时负数区无刻度(如 [-37,284] 第一个刻度是 0)→ 向下取整保证负数刻度显示
+  const span = hi - lo;
+  const base = Math.pow(10, Math.floor(Math.log10(Math.max(span / 5, 1e-9))));
+  const m = span / 5 / base;
+  const step = base * (m <= 1 ? 1 : m <= 2 ? 2 : m <= 2.5 ? 2.5 : m <= 5 ? 5 : 10);
+  p.uplot.setScale("y", {
+    min: Math.floor(lo / step) * step,
+    max: Math.ceil(hi / step) * step,
+  });
   // 显式设置 x 范围:uPlot 对后创建的窗口 x scale 不自动计算(实测 undefined),
   // 导致 x 轴 _show=false 不绘制 → 这里手动算(数据范围或同步范围)
   const xData = p.uplot.data[0];
