@@ -448,11 +448,9 @@ function broadcastX(u, min, max) {
   syncingX = false;
 }
 
-/* 单个示波器的 uPlot 配置 */
+/* 单个示波器窗口的 uPlot 配置 */
 function makePlotOpts(p) {
   const sigs = p.sigs;
-  const withU = state.plots.filter(x => x.uplot);
-  const isLast = p.id === Math.max(...withU.map(x => x.id));
   return {
     width: Math.max(200, p.canvasEl.clientWidth - 8),
     height: Math.max(100, p.canvasEl.clientHeight - 4),
@@ -476,8 +474,8 @@ function makePlotOpts(p) {
       },
     },
     axes: [
-      // x 轴:只在最后一个示波器显示(避免重复刻度)
-      { show: isLast, stroke: "#8a93a3", grid: { stroke: "#242830", width: 1 },
+      // CANoe 式:每个窗口底部都有 x 轴刻度,时间同步后刻度对齐(视觉共享)
+      { show: true, stroke: "#8a93a3", grid: { stroke: "#242830", width: 1 },
         ticks: { stroke: "#3a4150" }, font: "11px ui-monospace, Menlo",
         values: (u, vals) => vals.map(v => v.toFixed(2) + "s") },
       { stroke: "#8a93a3", grid: { stroke: "#242830", width: 1 },
@@ -584,11 +582,10 @@ async function toggleConfigDrawer() {
 
 function resizeChart() {
   if (!state.plots.length) return;
-  const wrap = document.getElementById("plot-wrap");
-  const w = Math.max(200, wrap.clientWidth - 16);
   state.plots.forEach(p => {
     if (!p.uplot) return;
-    const h = Math.max(80, p.el.clientHeight - 26);   // 减标题高度
+    const w = Math.max(200, p.el.clientWidth - 8);       // 横向平铺:每窗口自己的宽度
+    const h = Math.max(80, p.el.clientHeight - 26);      // 减标题高度
     p.uplot.setSize({ width: w, height: h });
     // 高 DPI 修正:setSize 后手动同步 canvas 物理尺寸
     const cv = p.canvasEl.querySelector("canvas");
