@@ -88,6 +88,16 @@ body {
   user-select: none;
 }
 .msg-head:hover { background: #23262e; }
+/* 发送节点标签 */
+.msg-tag {
+  flex: none;
+  background: rgba(77, 163, 255, .14); color: #7db8ff;
+  border: 1px solid rgba(77, 163, 255, .32);
+  border-radius: 3px; padding: 0 5px;
+  font-size: 10px; font-weight: 600;
+  letter-spacing: .5px;
+  white-space: nowrap;
+}
 .msg-id {
   font-family: ui-monospace, Menlo, monospace;
   color: #4da3ff;

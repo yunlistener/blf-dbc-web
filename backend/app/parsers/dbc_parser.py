@@ -26,6 +26,7 @@ def messages_summary(db) -> list[dict]:
             "length": msg.length,
             "cycle_time": msg.cycle_time,
             "is_extended": msg.is_extended_frame,
+            "senders": list(getattr(msg, "senders", []) or []),
             "signals": [s.name for s in msg.signals],
             "signal_count": len(msg.signals),
         })
@@ -43,6 +44,7 @@ def message_detail(db, frame_id: int) -> dict | None:
                 "length": msg.length,
                 "cycle_time": msg.cycle_time,
                 "is_extended": msg.is_extended_frame,
+                "senders": list(getattr(msg, "senders", []) or []),
                 "signals": [
                     {
                         "name": s.name,

@@ -555,7 +555,11 @@ async function loadDbcTree() {
 
       const mhead = document.createElement("div");
       mhead.className = "msg-head";
-      mhead.innerHTML = `<span class="caret">▸</span><span class="msg-id">${m.frame_id_hex}</span>
+      const sender = (m.senders && m.senders.length) ? m.senders[0] : "";
+      const senderTip = (m.senders || []).join(", ");
+      mhead.innerHTML = `<span class="caret">▸</span>
+        ${sender ? `<span class="msg-tag" title="发送节点: ${senderTip}">${sender}</span>` : ""}
+        <span class="msg-id">${m.frame_id_hex}</span>
         <span class="msg-name">${m.name}</span>
         <span class="msg-count">${m.signal_count} 信号</span>`;
       mhead.onclick = () => {
