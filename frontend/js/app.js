@@ -492,7 +492,7 @@ function updateSeriesData(p) {
   sigs.forEach(s => {
     let ser = p.series[s.slot];
     if (!ser) {
-      ser = p.chart.addLineSeries({
+      ser = p.chart.addSeries(LightweightCharts.LineSeries, {
         color: s.color,
         lineWidth: s.choices ? 1 : 2,
         priceScaleId: "left",                  // 同窗共享 y 轴(LWC 自动聚合范围)
@@ -534,11 +534,11 @@ function updatePlotData(p) {
   }
   if (!p.chart) createLwcChart(p);
   updateSeriesData(p);
-  // 播放中:y 轴固定全量范围(后端 signal-stats,防每帧 setData 重算导致曲线跳动)
+  // 播放中:y 轴固定全量范围(本地 staticData 聚合,防每帧 setData 重算导致曲线跳动)
   if (playState.playing || state.playYRange) {
     const ps = p.chart.priceScale("left");
     ps.applyOptions({ autoScale: false });
-    if (state.playYRange) ps.setVisibleRange(state.playYRange);
+    if (state.playYRange) ps.setVisibleRange(state.playYRange);   // LWC 5.x 官方 API
   }
   // x 范围:固定范围(state.xRange/全量)或自适应
   const dur = state.stats && state.stats.duration ? state.stats.duration * 1000 : 0;
@@ -1571,21 +1571,21 @@ function resetPlayData() {
   state.signals.forEach(s => { s.data = { times: [], values: [] }; });
 }
 
-/* 播放开始时加载各信号全量 min/max(signal-stats,缓存秒回),固定 y 轴防跳动 */
+/* 播放开始时聚合各信号全量 min/max(本地 staticData,免 API),固定 y 轴防跳动 */
 async function loadPlayYRange() {
-  try {
-    const ranges = [];
-    for (const s of state.signals) {
-      const st = await api(`/api/blf/${state.blf}/signal-stats?dbc=${encodeURIComponent(s.dbc || "")}` +
-        `&frame_id=0x${s.frame_id.toString(16)}&signal=${encodeURIComponent(s.signal)}&channel=${s.channel}`);
-      if (st.min != null && st.max != null) ranges.push([st.min, st.max]);
+  let lo = Infinity, hi = -Infinity;
+  for (const s of state.signals) {
+    if (!s.staticData) continue;
+    for (const v of s.staticData.values) {
+      const val = (v != null && typeof v === "object" && "value" in v) ? v.value : v;
+      if (val == null) continue;
+      if (val < lo) lo = val;
+      if (val > hi) hi = val;
     }
-    if (!ranges.length) return;
-    const lo = Math.min(...ranges.map(r => r[0]));
-    const hi = Math.max(...ranges.map(r => r[1]));
-    if (lo === hi) state.playYRange = { min: lo - 1, max: hi + 1 };
-    else { const pad = (hi - lo) * 0.15; state.playYRange = { min: lo - pad, max: hi + pad }; }
-  } catch (e) { /* 失败则保持 autoScale */ }
+  }
+  if (lo === Infinity) return;
+  if (lo === hi) state.playYRange = { min: lo - 1, max: hi + 1 };
+  else { const pad = (hi - lo) * 0.15; state.playYRange = { min: lo - pad, max: hi + pad }; }
 }
 
 /* 播放结束/停止:恢复 y 轴自动缩放 */
