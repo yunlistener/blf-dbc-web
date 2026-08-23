@@ -1128,9 +1128,11 @@ function renderAddSignalList(q) {
   const box = document.getElementById("add-signal-list");
   box.innerHTML = "";
   const ql = (q || "").toLowerCase();
+  const addedKeys = new Set(state.signals.map(s => `${s.frame_id}|${s.signal}|${s.channel}`));
   for (const ch of state.channels) {
     for (const m of (ch.messages || [])) {
       const sigs = m.signals || [];
+      const hasData = state.hasData && state.hasData.has(m.frame_id);
       const match = !ql ||
         String(m.frame_id_hex).toLowerCase().includes(ql) ||
         (m.name || "").toLowerCase().includes(ql) ||
@@ -1141,16 +1143,27 @@ function renderAddSignalList(q) {
       mdiv.className = "add-msg";
       const mhead = document.createElement("div");
       mhead.className = "add-msg-head";
-      mhead.innerHTML = `<span class="caret">▾</span><span class="msg-id">${m.frame_id_hex}</span> ${m.name} <span class="dim">CH${ch.channel}</span>`;
+      mhead.innerHTML = `<span class="caret">▾</span><span class="msg-id">${m.frame_id_hex}</span> ${m.name} <span class="dim">CH${ch.channel}</span>` +
+        (hasData ? "" : ` <span class="nodata-tag">无数据</span>`);
       mhead.onclick = () => {
         mdiv.querySelectorAll(".add-sig").forEach(x => x.style.display = x.style.display === "none" ? "" : "none");
       };
       mdiv.appendChild(mhead);
       for (const s of sigs) {
+        const key = `${m.frame_id}|${s}|${ch.channel}`;
+        const added = addedKeys.has(key);
         const sdiv = document.createElement("div");
         sdiv.className = "add-sig";
-        sdiv.innerHTML = `<span class="sig-name">${s}</span>`;
-        sdiv.onclick = () => addSignalToPlot(addingPlot, m, s, ch.channel);
+        if (added) {
+          sdiv.innerHTML = `<span class="sig-name" style="color:#5c6472">${s}</span> <span class="dim">已添加</span>`;
+          sdiv.style.cursor = "default";
+        } else if (!hasData) {
+          sdiv.innerHTML = `<span class="sig-name" style="color:#5c6472">${s}</span>`;
+          sdiv.style.cursor = "default";
+        } else {
+          sdiv.innerHTML = `<span class="sig-name">${s}</span>`;
+          sdiv.onclick = () => addSignalToPlot(addingPlot, m, s, ch.channel);
+        }
         mdiv.appendChild(sdiv);
       }
       box.appendChild(mdiv);
