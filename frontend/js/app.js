@@ -361,6 +361,7 @@ function syncPlots() {
     p.sigs = state.signals.filter(s => s.plotId === id);
   });
   state.plots.forEach(p => updatePlotData(p));
+  resizeChart();   // 强制同步所有窗口尺寸(防创建时布局未就绪导致画布异常)
 }
 
 /* 添加一个空示波器 */
@@ -428,6 +429,20 @@ function updatePlotData(p) {
   } else {
     p.uplot.setData(data);
   }
+  // 手动设置 y 范围:uPlot 1.6 的 range 回调只在 scale 无数据聚合时调用,
+  // series 有数据时走聚合路径(多窗口下算出错误范围)→ 这里显式计算覆盖
+  let lo = Infinity, hi = -Infinity;
+  sigs.forEach((s, i) => {
+    for (const v of per[i + 1]) {
+      if (v == null) continue;
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+  });
+  if (lo === Infinity) { lo = 0; hi = 1; }
+  else if (lo === hi) { lo -= 1; hi += 1; }       // 恒值信号(如全 0)扩开
+  else { const pad = (hi - lo) * 0.15; lo -= pad; hi += pad; }
+  p.uplot.setScale("y", { min: lo, max: hi });
   // 恢复时间同步范围
   if (state.xRange) p.uplot.setScale("x", state.xRange);
   // 刷新本示波器信号的已选列值
@@ -457,21 +472,12 @@ function makePlotOpts(p) {
     legend: { show: false },
     series: [{}, ...sigs.map(s => ({
       show: true, label: s.signal, stroke: () => s.color,
-      scale: "y", auto: true, width: 1.5,
+      scale: "y", auto: true, width: 2,     // 曲线加粗,恒值线更明显
       points: { show: () => false },
     }))],
     scales: {
       x: { time: false },   // auto 由数据确定;缩放走 setScale + broadcastX
-      y: {
-        auto: true,
-        // 恒值信号零跨度扩开;⚠️ range 必须返回数组(返回 null 会崩)
-        range: (u, dataMin, dataMax) => {
-          if (dataMin == null || !isFinite(dataMin)) return [0, 1];
-          if (dataMin === dataMax) return [dataMin - 1, dataMax + 1];
-          const pad = (dataMax - dataMin) * 0.1;
-          return [dataMin - pad, dataMax + pad];
-        },
-      },
+      y: { auto: true },    // y 范围由 updatePlotData 显式 setScale(见上,绕过 uPlot 聚合 bug)
     },
     axes: [
       // CANoe 式:每个窗口底部都有 x 轴刻度,时间同步后刻度对齐(视觉共享)
