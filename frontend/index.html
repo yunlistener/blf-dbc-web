@@ -36,7 +36,10 @@
 
     <!-- 主区:曲线 + 底部面板 -->
     <main id="main">
-      <div id="chart"></div>
+      <div id="chart">
+        <div id="sig-sidebar"></div>   <!-- 已选信号列 -->
+        <div id="plot-wrap"></div>     <!-- uPlot 挂载点 -->
+      </div>
       <div id="cursor-panel" class="readout">
         <span class="ro-item"><b>时间</b> <span id="ro-time">—</span></span>
         <span id="ro-signals" class="ro-signals"></span>
@@ -152,6 +155,6 @@
   <!-- 配置抽屉(嵌入主页面,点击右边缘展开/收起) -->
 
 <script src="vendor/uPlot.min.js"></script>
-<script src="js/app.js?v=15"></script>
+<script src="js/app.js?v=16"></script>
 </body>
 </html>

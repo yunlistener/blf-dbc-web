@@ -137,12 +137,49 @@ function onCursorMove(u, x, y) {
       ${s.signal}: <b>${display}</b>
       <span class="u">${s.unit || ""}</span>`;
     box.appendChild(div);
+    // 同步左侧信号列的当前值
+    const valEl = document.getElementById(`sigval-${s.slot}`);
+    if (valEl) valEl.textContent = display;
   });
+}
+
+/* 左侧已选信号列:颜色标记 + 信号名 + 当前值 + 移除 */
+function renderSigSidebar() {
+  const box = document.getElementById("sig-sidebar");
+  if (!state.signals.length) {
+    box.innerHTML = `<div class="sig-sidebar-title">已选信号</div>
+      <div class="hint" style="padding:8px;font-size:11px">点击左侧信号树选择</div>`;
+    return;
+  }
+  box.innerHTML = `<div class="sig-sidebar-title">已选信号 (${state.signals.length}/${MAX_SERIES})</div>` +
+    state.signals.map(s => `
+      <div class="sig-sidebar-row">
+        <span class="dot" style="background:${s.color}"></span>
+        <span class="sname" title="${s.signal}">${s.signal}</span>
+        <span class="sval" id="sigval-${s.slot}">—</span>
+        <span class="srm" title="移除" onclick="removeSignal(${s.slot})">✕</span>
+      </div>`).join("");
+}
+
+/* 从已选列表移除信号 */
+function removeSignal(slot) {
+  const s = state.signals.find(x => x.slot === slot);
+  if (!s) return;
+  state.signals = state.signals.filter(x => x !== s);
+  // 同步信号树中的选中态
+  document.querySelectorAll(".sig-item.active").forEach(el => {
+    if (el.dataset.sig === s.signal && String(el.dataset.ch) === String(s.channel)) {
+      el.classList.remove("active");
+    }
+  });
+  if (state.uplot) state.uplot.setSeries(slot, { show: false });
+  draw();
 }
 
 function draw() {
   const u = state.uplot;
-  const el = document.getElementById("chart");
+  const el = document.getElementById("plot-wrap");
+  renderSigSidebar();   // 左侧已选信号列
   if (!state.signals.length) {
     if (u) {
       for (let i = 1; i <= MAX_SERIES; i++) u.setSeries(i, { show: false });
@@ -216,7 +253,7 @@ function applySeries(s) {
 }
 
 function makeUplotOpts() {
-  const el = document.getElementById("chart");
+  const el = document.getElementById("plot-wrap");
   return {
     width: Math.max(200, el.clientWidth - 16),   // 防止窄窗口下宽度为负
     height: Math.max(200, el.clientHeight - 16),
@@ -292,7 +329,7 @@ async function toggleConfigDrawer() {
 
 function resizeChart() {
   if (!state.uplot) return;
-  const el = document.getElementById("chart");
+  const el = document.getElementById("plot-wrap");
   const w = Math.max(200, el.clientWidth - 16);
   const h = Math.max(200, el.clientHeight - 16);
   state.uplot.setSize({ width: w, height: h });
@@ -445,7 +482,7 @@ async function loadFiles() {
   // 重置分析状态(文件可能已切换)
   state.signals = [];
   if (state.uplot) { state.uplot.destroy(); state.uplot = null; }
-  document.getElementById("chart").innerHTML = "";
+  document.getElementById("plot-wrap").innerHTML = "";
   document.getElementById("ro-signals").innerHTML = "";
   state.trace = { frameId: null, channel: null, offset: 0, limit: 200, search: null };
 
@@ -539,6 +576,8 @@ async function loadDbcTree() {
           <span class="sig-name">${s}</span>
           <span class="sig-unit">${m.frame_id_hex}</span>`;
         item.onclick = () => toggleSignal(m, s, item, ch.channel);
+        item.dataset.sig = s;
+        item.dataset.ch = String(ch.channel);
         list.appendChild(item);
       }
       wrap.appendChild(list);
