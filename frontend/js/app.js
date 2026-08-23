@@ -128,6 +128,17 @@ function fmtSigVal(s, v) {
   return fmtVal(v);
 }
 
+/* 带单位的信号值显示:数值信号 → "92.5 °C";值表信号无单位,原样 */
+function fmtSigValUnit(s, v) {
+  const t = fmtSigVal(s, v);
+  return (s.unit && v != null && typeof v === "number") ? `${t} ${s.unit}` : t;
+}
+
+/* 统计数值加单位(供表格用) */
+function fmtUnit(s, v) {
+  return (v == null) ? "—" : (s.unit ? `${v} ${s.unit}` : String(v));
+}
+
 const cursorTip = document.getElementById("cursor-tip");
 function hideCursorTip() { cursorTip.style.display = "none"; }
 
@@ -149,7 +160,7 @@ function updateSigVals(u, x) {
   state.signals.forEach(s => {
     const v = u.data[s.slot] ? u.data[s.slot][idx] : null;
     const valEl = document.getElementById(`sigval-${s.slot}`);
-    if (valEl) valEl.textContent = fmtSigVal(s, v);
+    if (valEl) valEl.textContent = fmtSigValUnit(s, v);
   });
 }
 
@@ -1066,9 +1077,9 @@ async function loadSigStats() {
         <td><span class="dot" style="background:${s.color};display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px"></span>${s.signal}</td>
         <td>CH${s.channel}</td>
         <td>${st.count}</td>
-        <td>${st.min ?? "—"}</td><td>${st.max ?? "—"}</td>
-        <td>${st.mean ?? "—"}</td><td>${st.std ?? "—"}</td>
-        <td>${st.last ?? "—"}</td>
+        <td>${fmtUnit(s, st.min)}</td><td>${fmtUnit(s, st.max)}</td>
+        <td>${fmtUnit(s, st.mean)}</td><td>${fmtUnit(s, st.std)}</td>
+        <td>${fmtUnit(s, st.last)}</td>
       </tr>`;
       if (st.choices_dist) {
         const dist = Object.entries(st.choices_dist)

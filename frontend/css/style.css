@@ -179,7 +179,7 @@ body {
 }
 .sig-sidebar-row .sval {
   font-family: ui-monospace, Menlo, monospace; color: #e8ecf2;
-  font-size: 10px; max-width: 52px; overflow: hidden;
+  font-size: 10px; max-width: 100px; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap;
 }
 .sig-sidebar-row .srm {
