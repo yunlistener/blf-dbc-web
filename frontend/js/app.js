@@ -29,6 +29,7 @@ const state = {
   lastCursorT: null, // 最后光标时刻(相对秒,信号行 tooltip 显示用)
   jitterMarks: [],   // [{t, color}] 抖动峰值时间点(相对秒),示波器 x 轴标记
   anchorT: null,     // 测量锚点时间(相对秒);点击设置,再点清除
+  syncLines: {},     // 光标同步竖线: {plotId: 像素x} 每窗口一条(draw hook 绘制)
 };
 
 function showTip(msg) { document.getElementById("st-tip").textContent = msg; }
@@ -170,25 +171,26 @@ function showCursorTipAt(x, y, html) {
   cursorTip.style.top = Math.max(8, ty) + "px";
 }
 
-/* 光标同步:鼠标在某示波器上移动时,其他示波器显示垂直虚线跟随(CANoe 式) */
+/* 光标同步:鼠标在某示波器上移动时,其他示波器显示垂直虚线跟随(CANoe 式)。
+   线由 draw hook 统一绘制(0→绘图区底,保证到头到底),不用 uPlot 自带光标 */
 let syncingCursor = false;
 function syncCursor(u, x, y) {
   if (syncingCursor) return;
   syncingCursor = true;
   const tv = u.posToVal(x, "x");          // 光标处的 x 值(时间)
   state.plots.forEach(p => {
-    if (p.uplot && p.uplot !== u) {
-      const xp = p.uplot.valToPos(tv, "x");  // 换算到目标窗口的像素位置
-      p.uplot.setCursor({ left: xp, top: y, show: true });
-    }
+    if (!p.uplot) return;
+    const px = (p.uplot === u) ? u.valToPos(tv, "x", true) : p.uplot.valToPos(tv, "x", true);
+    state.syncLines[p.id] = px;           // 记录每窗口竖线像素位置(物理像素)
   });
+  state.plots.forEach(p => { if (p.uplot) p.uplot.redraw(); });
   syncingCursor = false;
 }
-/* 鼠标离开某示波器 → 其他窗口的光标一并隐藏 */
-function hideSyncedCursor(u) {
-  state.plots.forEach(p => {
-    if (p.uplot && p.uplot !== u) p.uplot.setCursor({ show: false });
-  });
+/* 鼠标离开某示波器 → 全部同步线清除 */
+function hideSyncedCursor() {
+  if (Object.keys(state.syncLines).length === 0) return;
+  state.syncLines = {};
+  state.plots.forEach(p => { if (p.uplot) p.uplot.redraw(); });
 }
 
 /* 更新已选信号列的值(不弹 tooltip) */
@@ -609,7 +611,7 @@ function makePlotOpts(p) {
     scales,
     axes,
     cursor: {
-      x: true, y: false,     // 只保留竖直标线(同步/读数不需要横线)
+      x: false, y: false,    // uPlot 自带光标线关闭:竖线由 draw hook 统一绘制(到头到底)
       stroke: "#7dd3fc", width: 1, dash: [4, 3],
       move: (u, x, y) => {
         onCursorMove(u, x, y);
@@ -625,7 +627,7 @@ function makePlotOpts(p) {
         broadcastX(u, min, max);
       }],
       ready: [(u) => {
-        u.over.addEventListener("mouseleave", () => hideSyncedCursor(u));
+        u.over.addEventListener("mouseleave", () => { hideCursorTip(); hideSyncedCursor(); });
         u.over.addEventListener("wheel", (e) => {
           e.preventDefault();
           const factor = e.deltaY < 0 ? 0.85 : 1.18;
@@ -640,28 +642,30 @@ function makePlotOpts(p) {
           const { min, max } = u.scales.x;
           broadcastX(u, min, max);
         }, { passive: false });
-        u.over.addEventListener("mouseleave", hideCursorTip);   // 移出图表 → 隐藏 tooltip
+        u.over.addEventListener("mouseleave", hideCursorTip);   // 移出图表 → 隐藏 tooltip(同步线清除在 ready 里)
         // 双点测量:点击设置/清除锚点(黄色三角标记,移动光标显示 Δt)
         u.over.addEventListener("click", (e) => {
           state.anchorT = (state.anchorT == null) ? u.posToVal(e.offsetX, "x") : null;
           state.plots.forEach(pp => { if (pp.uplot) pp.uplot.redraw(); });
         });
       }],
-      // 时间轴顶部标记:测量锚点(黄)+ 本示波器信号的抖动峰值
+      // 时间轴顶部标记:测量锚点(红)+ 同步竖线(蓝)+ 抖动峰值
       draw: [(u) => {
         const ctx = u.ctx;
         ctx.save();
+        const p = state.plots.find(pp => pp.uplot === u);
+        const H = u.bbox.height;   // 绘图区高度(物理像素)
+        // 锚点:红色竖线贯穿(所有窗口同步)
         if (state.anchorT != null) {
           const px = u.valToPos(state.anchorT, "x", true);
           if (px != null && isFinite(px)) {
-            // 红色竖线贯穿整个窗口(所有示波器同步,draw hook 每窗口都执行)
             ctx.strokeStyle = "#ff4d4d";
             ctx.globalAlpha = 0.8;
             ctx.lineWidth = 1.5;
             ctx.setLineDash([4, 3]);
             ctx.beginPath();
             ctx.moveTo(px, 0);
-            ctx.lineTo(px, u.bbox.height);
+            ctx.lineTo(px, H);
             ctx.stroke();
             ctx.setLineDash([]);
             // 顶部三角(红)
@@ -672,6 +676,21 @@ function makePlotOpts(p) {
             ctx.lineTo(px + 4, 0);
             ctx.lineTo(px, -7);
             ctx.fill();
+          }
+        }
+        // 光标同步竖线:浅蓝虚线贯穿(0→绘图区底,到头到底)
+        if (p && state.syncLines[p.id] != null) {
+          const px = state.syncLines[p.id];
+          if (isFinite(px)) {
+            ctx.strokeStyle = "#7dd3fc";
+            ctx.globalAlpha = 0.9;
+            ctx.lineWidth = 1;
+            ctx.setLineDash([4, 3]);
+            ctx.beginPath();
+            ctx.moveTo(px, 0);
+            ctx.lineTo(px, H);
+            ctx.stroke();
+            ctx.setLineDash([]);
           }
         }
         if (showJitterMarks() && state.jitterMarks && state.jitterMarks.length) {
