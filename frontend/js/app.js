@@ -1039,6 +1039,43 @@ async function loadBusLoad() {
   }
 }
 
+/* ---------- 示波器高度三档 ---------- */
+let chartMode = 1;   // 0=全部页面 1=2/3 页面 2=全部收缩
+function cycleChartMode() {
+  chartMode = (chartMode + 1) % 3;
+  applyChartMode();
+}
+function applyChartMode() {
+  const chart = document.getElementById("chart");
+  const tabs = document.getElementById("tabs");
+  const ind = document.getElementById("chart-mode-ind");
+  const panelIds = ["panel-trace", "panel-stats", "panel-sigstats"];
+  if (chartMode === 0) {
+    // 全部页面:只有示波器
+    chart.style.display = "";
+    chart.style.flex = "1";
+    chart.style.minHeight = "";
+    tabs.style.display = "none";
+    panelIds.forEach(id => document.getElementById(id).style.display = "none");
+    ind.textContent = "▔ 全页";
+    hideCursorTip();
+  } else {
+    chart.style.display = "";
+    chart.style.minHeight = "";
+    tabs.style.display = "";
+    if (chartMode === 1) {
+      chart.style.flex = "2";          // 示波器 2/3,面板 1/3
+      ind.textContent = "▁▔ 2/3";
+    } else {
+      chart.style.flex = "0 1 0%";     // 全部收缩:示波器收起,面板占满
+      chart.style.minHeight = "0";
+      ind.textContent = "▁ 收起";
+    }
+    switchTab(currentTab());           // 恢复当前 tab 的面板显示
+  }
+  setTimeout(resizeChart, 60);         // 高度变化 → 同步 uPlot
+}
+
 /* 当前底部 tab */
 function currentTab() {
   return document.querySelector("#tabs .tab.active")?.dataset.tab || "trace";

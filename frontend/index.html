@@ -46,6 +46,11 @@
         <div id="plot-wrap"></div>     <!-- uPlot 挂载点 -->
       </div>
 
+      <!-- 示波器高度三档把手:全部页面 / 2/3 / 全部收缩 -->
+      <div id="chart-resizer" class="chart-resizer" onclick="cycleChartMode()" title="示波器高度:全部页面 / 2/3 页面 / 全部收缩">
+        <span id="chart-mode-ind">▁▔ 2/3</span>
+      </div>
+
       <!-- 底部标签页 -->
       <div id="tabs">
         <div class="tab active" data-tab="trace" onclick="switchTab('trace')">Trace 报文流</div>
@@ -166,6 +171,6 @@
   <div id="cursor-tip" class="cursor-tip" style="display:none"></div>
 
 <script src="vendor/uPlot.min.js"></script>
-<script src="js/app.js?v=26"></script>
+<script src="js/app.js?v=27"></script>
 </body>
 </html>
