@@ -348,7 +348,7 @@ async function restoreSelectedSignals() {
         parseInt(el.closest(".msg-item").querySelector(".msg-id").textContent, 16) === rec.frame_id);
       const ch = state.channels.find(c => c.channel === rec.channel);
       const msg = ch && ch.messages ? ch.messages.find(m => m.frame_id === rec.frame_id) : null;
-      if (msg && state.hasData.has(rec.frame_id)) {
+      if (msg && state.hasData && state.hasData.has(rec.frame_id)) {
         const ok = await addSignal(msg, rec.signal, rec.channel, rec.plotId ?? null);
         if (ok) { restored++; if (item) item.classList.add("active"); }
       }
@@ -1097,7 +1097,7 @@ async function loadDbcTree() {
         mhead.querySelector(".caret").textContent = show ? "▾" : "▸";
       };
       // 日志中无此报文 → 灰色标记(点击信号时快速提示)
-      if (!state.hasData.has(m.frame_id)) mhead.classList.add("no-data");
+      if (state.hasData && !state.hasData.has(m.frame_id)) mhead.classList.add("no-data");
       wrap.appendChild(mhead);
 
       const list = document.createElement("div");
@@ -1134,7 +1134,8 @@ async function loadDbcTree() {
   // 首次使用(无记录)→ 自动选中第一个有数据的报文前两个信号
   const firstCh = state.channels.find(c => c.messages && c.messages.length);
   if (firstCh) {
-    const m0 = firstCh.messages.find(m => state.hasData.has(m.frame_id));
+    const m0 = state.hasData
+      ? firstCh.messages.find(m => state.hasData.has(m.frame_id)) : null;
     const items = Array.from(document.querySelectorAll(".chan-group .sig-item"));
     const findItem = (sig) => items.find(el =>
       el.dataset.sig === sig &&
