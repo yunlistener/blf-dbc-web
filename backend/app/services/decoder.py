@@ -15,12 +15,14 @@ def to_plain(v):
 def decode_signal(path, db, frame_id: int, signal_name: str,
                   start: Optional[float] = None, end: Optional[float] = None,
                   max_points: Optional[int] = None,
-                  channel: Optional[int] = None) -> dict:
+                  channel: Optional[int] = None,
+                  progress_cb=None) -> dict:
     """解码单个信号(走帧缓存,不重复全扫),返回 {times, values}。"""
     times: list[float] = []
     values: list[float] = []
 
-    for _ts, _ch, data, _is_fd, _dlc in get_frames(path, frame_id, channel=channel, start=start, end=end):
+    for _ts, _ch, data, _is_fd, _dlc in get_frames(path, frame_id, channel=channel, start=start, end=end,
+                                                    progress_cb=progress_cb):
         try:
             decoded = db.decode_message(frame_id, data)
         except Exception:

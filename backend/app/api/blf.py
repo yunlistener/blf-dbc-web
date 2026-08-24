@@ -15,6 +15,7 @@ from app.config import UPLOAD_DIR
 from app.parsers.blf_parser import stats as blf_stats
 from app.parsers.dbc_parser import load_database
 from app.services.decoder import decode_signal
+from app.services.progress import clear_progress, set_progress
 from app.services.blf_cache import get_frames as cache_get_frames
 from app.services.blf_cache import get_frames_index as cache_index
 from app.api.config_api import _load as load_config
@@ -43,13 +44,15 @@ def _resolve_dbc(dbc: Optional[str], channel: Optional[int]) -> str:
 
 
 @router.get("/{name}/stats")
+@router.get("/{name}/stats")
 def get_stats(name: str):
+    blf_path = _blf_path(name)
+    key = f"stats:{name}"
+    set_progress(key, "扫描帧", 0.0)
     try:
-        return blf_stats(_blf_path(name))
-    except Exception as e:
-        raise HTTPException(422, f"BLF 解析失败: {e}")
-
-
+        return blf_stats(blf_path, progress_cb=lambda p: set_progress(key, "扫描帧", p))
+    finally:
+        clear_progress(key)
 @router.get("/{name}/decode")
 def get_decode(name: str, dbc: Optional[str] = None, frame_id: str = "",
                signal: str = "", channel: Optional[int] = None,
@@ -74,8 +77,14 @@ def get_decode(name: str, dbc: Optional[str] = None, frame_id: str = "",
     if not any(s.name == signal for s in msg.signals):
         raise HTTPException(404, f"报文 {hex(fid)} 无信号 {signal}")
 
-    result = decode_signal(blf_path, db, fid, signal, start, end, max_points,
-                           channel=channel)
+    key = f"index:{name}"
+    set_progress(key, "构建帧索引(首次解码,大文件较慢)", 0.0)
+    try:
+        result = decode_signal(blf_path, db, fid, signal, start, end, max_points,
+                               channel=channel,
+                               progress_cb=lambda p: set_progress(key, "构建帧索引(首次解码,大文件较慢)", p))
+    finally:
+        clear_progress(key)
     if not result["times"]:
         # 日志中无该报文数据(报文在 DBC 里有定义但日志里没发)→ 返回空结果,前端提示
         result["empty"] = True

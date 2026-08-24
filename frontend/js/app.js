@@ -1907,6 +1907,28 @@ function pausePlayOnSignalChange() {
 
 setInterval(updateDiag, 800);   // 诊断条定时刷新
 
+/* 大文件处理遮罩:轮询后端进度,处理中显示"正在处理" + 进度条 */
+async function pollBusyProgress() {
+  try {
+    const r = await fetch("/api/admin/progress");
+    const d = await r.json();
+    const entries = Object.values(d.progress || {});
+    const ov = document.getElementById("busy-overlay");
+    if (!ov) return;
+    if (entries.length) {
+      const e = entries[0];
+      const pct = Math.round((e.progress || 0) * 100);
+      document.getElementById("busy-bar").style.width = pct + "%";
+      document.getElementById("busy-info").textContent =
+        `${e.stage || "处理中"} · ${pct}%`;
+      ov.style.display = "flex";
+    } else {
+      ov.style.display = "none";
+    }
+  } catch (err) { /* 后端重启/断连时忽略 */ }
+}
+setInterval(pollBusyProgress, 500);
+
 init().catch(e => {
   document.getElementById("tree-hint").textContent = "加载失败: " + e.message;
 });

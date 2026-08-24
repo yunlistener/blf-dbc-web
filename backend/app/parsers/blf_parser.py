@@ -7,14 +7,21 @@ from typing import Union
 import can
 
 
-def stats(path: Union[str, Path]) -> dict:
-    """单遍扫描 BLF,返回帧数/时间范围/错误帧/按 ID 聚合统计/通道分布。"""
+def stats(path: Union[str, Path], progress_cb=None) -> dict:
+    """单遍扫描 BLF,返回帧数/时间范围/错误帧/按 ID 聚合统计/通道分布。
+    progress_cb(0~1):按文件读取位置回调(大文件进度)。"""
     by_id: dict[int, dict] = {}
     channels: dict[int, int] = {}
     total = fd = error = remote = 0
     first_ts = last_ts = None
 
-    for msg in can.BLFReader(str(path)):
+    path = Path(path)
+    total_size = path.stat().st_size or 1
+    reader = can.BLFReader(str(path))
+    # python-can BLFReader 的文件对象属性名不稳定,运行时探测
+    fobj = getattr(reader, "f", None) or getattr(reader, "_file", None) or getattr(reader, "file", None)
+
+    for msg in reader:
         ts = msg.timestamp
         if first_ts is None:
             first_ts = ts
@@ -23,6 +30,12 @@ def stats(path: Union[str, Path]) -> dict:
 
         ch = getattr(msg, "channel", 0)
         channels[ch] = channels.get(ch, 0) + 1
+
+        if progress_cb and fobj is not None:
+            try:
+                progress_cb(min(0.99, fobj.tell() / total_size))
+            except Exception:
+                pass
 
         if getattr(msg, "is_error_frame", False):
             error += 1

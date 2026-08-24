@@ -8,11 +8,19 @@ from pathlib import Path
 
 from fastapi import APIRouter
 
+from app.services.progress import snapshot
+
 router = APIRouter()
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]   # backend/(admin.py 在 backend/app/api/ 下)
 HOST = os.environ.get("HOST", "127.0.0.1")
 PORT = os.environ.get("PORT", "8000")
+
+
+@router.get("/progress")
+def get_progress():
+    """当前正在处理的任务进度(大文件解析时前端轮询)。"""
+    return {"progress": snapshot()}
 
 
 @router.post("/restart")
