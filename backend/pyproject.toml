@@ -1,0 +1,15 @@
+[project]
+name = "blf-dbc-web-backend"
+version = "0.1.0"
+description = "BLF/DBC CAN 总线解析分析平台后端(FastAPI + python-can + cantools)"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "python-can>=4.4",
+    "cantools>=39.0",
+    "python-multipart>=0.0.9",
+]
+
+[tool.uv]
+package = false

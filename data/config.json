@@ -2,9 +2,9 @@
   "bus_type": "canfd",
   "baudrate_arb": 500000,
   "baudrate_data": 2000000,
-  "blf": "test.blf",
+  "blf": "EPS-299716_2026-08-11T08_29_04_2026-08-11T08_39_59_can.blf",
   "dbc": "test.dbc",
   "channels": {
-    "0": "test.dbc"
+    "2": "EEA(5.1)_Message_List_version2.1.1_FL_CH_CANFD_ADCC_20260604160944.dbc"
   }
 }
