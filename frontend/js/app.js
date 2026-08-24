@@ -848,13 +848,14 @@ async function refreshBlfViews(files) {
     return;
   }
   try {
-    const st = await api(`/api/blf/${blfName}/stats`);
+    // ⚠️ 用 meta(零扫描秒回)而非 stats:删 cache 后 stats 返回 202(building)会渲染失败
+    const st = await api(`/api/blf/${blfName}/meta`);
     const size = fileList.find(f => f.name === blfName)?.size || 0;
-    const t0 = st.first_timestamp;
+    const t0 = st.start_timestamp;
     infoBox.innerHTML =
-      `<div>帧数 <b>${st.total_frames.toLocaleString()}</b> · 时长 <b>${st.duration_s.toFixed(2)} s</b> · 通道 <b>${(st.channels || []).length}</b></div>` +
+      `<div>帧数 <b>${(st.frames || 0).toLocaleString()}</b> · 时长 <b>${(st.duration_s || 0).toFixed(2)} s</b> · 通道 <b>${(st.channels || []).length}</b></div>` +
       `<div>大小 <b>${(size / 1048576).toFixed(1)} MB</b> · 开始 <b>${t0 ? new Date(t0 * 1000).toLocaleString() : "—"}</b></div>` +
-      (st.error_frames ? `<div class="blf-err">⚠ 错误帧 ${st.error_frames}</div>` : "");
+      (st.index_cached === false ? `<div class="blf-err">⏳ 索引后台构建中,统计/信号树稍后补齐</div>` : "");
     // 通道预览:按当前选中 BLF 的通道渲染;未保存的新选择 → 映射视为空(待重新配置)
     const blfChanged = blfName !== (state.config.blf || null);
     const chanCfg = blfChanged ? {} : (state.config.channels || {});
