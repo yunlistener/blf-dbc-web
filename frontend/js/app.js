@@ -937,20 +937,43 @@ async function saveConfig() {
 }
 
 /* ---------- 数据加载 ---------- */
-/* stats:有缓存秒回;无缓存后端返回 202 → 轮询等待(后台构建,进度条可见) */
-async function loadStats(name, tries = 0) {
+/* stats:有缓存秒回;无缓存 202 → 后台构建(不阻塞,轮询补全后 applyStats) */
+async function loadStats(name) {
   try {
     const r = await fetch(`/api/blf/${encodeURIComponent(name)}/stats`);
-    if (r.status === 202) {   // 后台构建中
-      await new Promise(res => setTimeout(res, 1000));
-      return await loadStats(name, tries + 1);
+    if (r.status === 202) {
+      pollStatsUntilReady(name);   // 非阻塞:后台构建完成自动补全
+      return null;
     }
     return await r.json();
   } catch (e) {
-    if (tries > 600) throw e;
-    await new Promise(res => setTimeout(res, 1000));
-    return await loadStats(name, tries + 1);
+    pollStatsUntilReady(name);     // 网络抖动 → 也走轮询
+    return null;
   }
+}
+async function pollStatsUntilReady(name) {
+  for (let i = 0; i < 900; i++) {   // 最多 15 分钟
+    await new Promise(res => setTimeout(res, 1000));
+    try {
+      const r = await fetch(`/api/blf/${encodeURIComponent(name)}/stats`);
+      if (r.status !== 200) continue;
+      applyStats(await r.json());
+      return;
+    } catch (e) { /* 重试 */ }
+  }
+}
+/* stats 就绪 → 更新全局状态 + 信号树灰标 + 统计 */
+function applyStats(st) {
+  if (!st) return;
+  state.stats = st;
+  state.t0 = st.first_ts || st.first_timestamp || 0;
+  const byId = st.by_id || {};
+  state.hasData = new Set(Array.isArray(byId) ? byId.map(e => e.frame_id) : Object.keys(byId).map(Number));
+  document.getElementById("st-frames").textContent = `帧数 ${st.total_frames}`;
+  document.getElementById("st-duration").textContent = `时长 ${st.duration_s.toFixed(1)} s`;
+  document.getElementById("st-ids").textContent = `报文数 ${st.unique_ids}`;
+  loadDbcTree();   // 刷新信号树灰标(报文级)
+  if (currentTab() === "stats") renderStats();
 }
 
 async function loadFiles() {
@@ -976,29 +999,32 @@ async function loadFiles() {
   document.getElementById("busload-box").dataset.loaded = "";   // 文件切换 → Bus Load 重新加载
   state.trace = { frameId: null, channel: null, offset: 0, limit: 200, search: null, range: null };
 
-  state.stats = await loadStats(state.blf);
-  // ⚠️ 批次1 stats 格式:by_id 为 dict{id:count}、channels 简化为 [0,1]、first_ts;兼容旧数组格式
-  const st = state.stats || {};
-  state.t0 = st.first_ts || st.first_timestamp || 0;   // 绝对时间基准
-  const byId = st.by_id || {};
-  state.hasData = new Set(Array.isArray(byId) ? byId.map(e => e.frame_id) : Object.keys(byId).map(Number));
-  const rawCh = st.channels || [];
-  const chanList = (rawCh.length && typeof rawCh[0] === "object")
-    ? rawCh : rawCh.map(c => ({ channel: c, frames: 0 }));
-  // 构建通道列表:每通道 DBC 只来自通道映射(不自动兜底,未配置即空,由用户指定)
+  // ① meta 零扫描秒回:通道列表 + 基本信息(不依赖全扫,大文件不弹处理弹窗)
+  let meta = null;
+  try {
+    meta = await api(`/api/blf/${encodeURIComponent(state.blf)}/meta`);
+  } catch (e) { /* 无缓存时 meta 内部已触发后台构建 */ }
   const chanCfg = state.config.channels || {};
-  state.channels = (chanList.length ? chanList : [{ channel: 0, frames: st.total_frames }]).map(c => ({
-    channel: c.channel,
-    frames: c.frames || 0,
-    dbc: chanCfg[String(c.channel)] || null,
-    messages: null,
+  const rawCh = (meta && meta.channels) || [];
+  state.channels = (rawCh.length ? rawCh : [0]).map(c => ({
+    channel: c, frames: 0, dbc: chanCfg[String(c)] || null, messages: null,
   }));
-  document.getElementById("st-frames").textContent = `帧数 ${state.stats.total_frames}`;
-  document.getElementById("st-duration").textContent = `时长 ${state.stats.duration_s.toFixed(1)} s`;
-  document.getElementById("st-ids").textContent = `报文数 ${state.stats.unique_ids}`;
-  showTip(`日志开始: ${state.t0 ? new Date(state.t0 * 1000).toLocaleString() : "—"}(时间显示为相对秒)`);
+  if (meta) {
+    document.getElementById("st-frames").textContent = `帧数 ${meta.frames}`;
+    document.getElementById("st-duration").textContent = `时长 ${meta.duration_s.toFixed(1)} s`;
+    document.getElementById("st-ids").textContent = "报文数 …";
+    showTip(`日志: ${meta.duration_s.toFixed(1)} s · ${meta.channels.length} 通道${meta.index_cached ? "" : "(后台构建索引中…)"}`);
+  }
+  // ② 信号树先用 meta 通道加载(DBC 报文树;灰标等 stats 完成补齐)
   await loadDbcTree();
-  renderStats();
+  // ③ stats:缓存秒回;无缓存 202 → 后台构建(提示条可见),完成自动 applyStats
+  const st0 = await loadStats(state.blf);
+  if (st0) applyStats(st0);
+  else if (meta) { state.t0 = meta.start_timestamp || 0; }
+  if (!state.stats) { state.stats = meta ? { duration_s: meta.duration_s, total_frames: meta.frames, unique_ids: 0, by_id: {} } : {}; }
+  if (state.stats && state.stats.by_id) {
+    if (currentTab() === "stats") renderStats();
+  }
 }
 
 async function loadDbcTree() {
@@ -1973,23 +1999,23 @@ function pausePlayOnSignalChange() {
 
 setInterval(updateDiag, 800);   // 诊断条定时刷新
 
-/* 大文件处理遮罩:轮询后端进度,处理中显示"正在处理" + 进度条 */
+/* 后台构建进度:轮询 /api/admin/progress → 顶部细提示条(不遮挡页面,可继续操作) */
 async function pollBusyProgress() {
   try {
     const r = await fetch("/api/admin/progress");
     const d = await r.json();
     const entries = Object.values(d.progress || {});
-    const ov = document.getElementById("busy-overlay");
-    if (!ov) return;
+    const bar = document.getElementById("busy-toast");
+    if (!bar) return;
     if (entries.length) {
       const e = entries[0];
       const pct = Math.round((e.progress || 0) * 100);
-      document.getElementById("busy-bar").style.width = pct + "%";
-      document.getElementById("busy-info").textContent =
-        `${e.stage || "处理中"} · ${pct}%`;
-      ov.style.display = "flex";
+      document.getElementById("busy-toast-bar").style.width = pct + "%";
+      document.getElementById("busy-toast-text").textContent =
+        `⏳ ${e.stage || "后台构建"} · ${pct}%`;
+      bar.style.display = "flex";
     } else {
-      ov.style.display = "none";
+      bar.style.display = "none";
     }
   } catch (err) { /* 后端重启/断连时忽略 */ }
 }

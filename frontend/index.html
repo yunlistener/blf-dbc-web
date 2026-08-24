@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>CAN 分析仪 — BLF/DBC 网页解析平台</title>
 <link rel="stylesheet" href="vendor/uPlot.min.css">
-<link rel="stylesheet" href="css/style.css?v=8">
+<link rel="stylesheet" href="css/style.css?v=9">
 </head>
 <body>
   <!-- 顶部工具栏 -->
@@ -176,13 +176,10 @@
   </div>
 
   <!-- 上传模态 -->
-  <!-- 大文件处理遮罩:后台解析/建索引时显示进度条(前端轮询 /api/admin/progress) -->
-  <div id="busy-overlay" class="busy-overlay" style="display:none">
-    <div class="busy-card">
-      <div class="busy-title">⏳ 正在处理大文件…</div>
-      <div class="busy-bar-bg"><div id="busy-bar" class="busy-bar" style="width:0%"></div></div>
-      <div id="busy-info" class="busy-info">准备中…</div>
-    </div>
+  <!-- 后台构建进度:顶部细提示条(不遮挡页面,可继续操作) -->
+  <div id="busy-toast" class="busy-toast" style="display:none">
+    <div id="busy-toast-bar" class="busy-toast-bar" style="width:0%"></div>
+    <span id="busy-toast-text">⏳ 后台构建…</span>
   </div>
 
   <div id="upload-modal" class="modal" style="display:none">
@@ -216,6 +213,6 @@
   </div>
 
 <script src="vendor/chart.js"></script>
-<script src="js/app.js?v=115"></script>
+<script src="js/app.js?v=117"></script>
 </body>
 </html>
