@@ -117,7 +117,7 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 | `GET /api/blf/{name}/signal-stats` / `cycle-stats` / `bus-load` | 信号统计 / 报文周期抖动 / 总线负载 |
 | `WS /ws/replay` | 播放通道(config/play/pause/stop/seek/rate;batch 帧批次推送) |
 
- > 💡 依赖统一由 **uv** 管理(`uv sync` 自动解析依赖并锁定 `uv.lock`),不再依赖系统 Python 的 pip 包;uvicorn 启动必须用 `.venv` 内的解释器(或 `uv run`),避免与系统 Python 混淆。
+> 💡 依赖统一由 **uv** 管理(`uv sync` 自动解析依赖并锁定 `uv.lock`),不再依赖系统 Python 的 pip 包;uvicorn 启动必须用 `.venv` 内的解释器(或 `uv run`),避免与系统 Python 混淆。
 
 ## 运行环境
 
