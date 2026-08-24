@@ -62,16 +62,16 @@ blf-dbc-web/
 │   ├── app/
 │   │   ├── main.py                  # 入口(API 路由 + 前端静态托管)
 │   │   ├── config.py                # 路径/常量
-│   │   ├── api/                     # files / dbc / blf 路由
-│   │   ├── parsers/                 # blf_parser(流式统计) / dbc_parser(cantools)
-│   │   └── services/decoder.py      # 信号解码(时间区间 + 降采样)
-│   ├── requirements.txt
+│   │   ├── api/                     # files / dbc / blf 路由 + ws(播放)
+│   │   └── services/                # decoder / playback / frame_source / blf_cache
+│   ├── pyproject.toml               # uv 依赖声明(uv sync 生成 .venv + uv.lock)
+│   ├── uv.lock
 │   └── scripts/make_test_data.py    # 测试数据生成
 ├── frontend/                        # 前端(由后端静态托管)
 │   ├── index.html                   # 界面
 │   ├── css/style.css                # 深色主题
-│   ├── js/app.js                    # 报文树 / uPlot 曲线 / 光标读数 / 缩放
-│   └── vendor/                      # uPlot 本地库(不依赖 CDN)
+│   ├── js/app.js                    # 报文树 / Chart.js 曲线 / 播放 / 光标读数 / 缩放
+│   └── vendor/                      # chart.js 本地库(不依赖 CDN)
 └── data/uploads/                    # 上传文件存储 + 测试数据
 ```
 
@@ -79,12 +79,13 @@ blf-dbc-web/
 
 ```bash
 cd backend
-# 1. 安装依赖(注意:须与启动 uvicorn 用同一个 Python 解释器)
-python3 -m pip install -r requirements.txt
+# 1. 创建虚拟环境并安装依赖(自动生成 .venv/ + uv.lock)
+uv sync
 # 2. 生成测试数据(data/uploads/test.dbc + test.blf)
-python3 scripts/make_test_data.py
-# 3. 启动服务
-python3 -m uvicorn app.main:app --port 8000
+uv run python scripts/make_test_data.py
+# 3. 启动服务(uv 虚拟环境内)
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
+# 或直接 .venv/bin/python -m uvicorn app.main:app --port 8000
 ```
 
 - **Web 界面**: http://127.0.0.1:8000/ ( 风格:CAN 分析仪)
@@ -94,9 +95,11 @@ python3 -m uvicorn app.main:app --port 8000
 ### 已实现的界面功能(风格)
 
 - 深色主题 + 顶部工具栏 + 底部状态栏(总帧数/时长/报文数)
-- 报文/信号树:按报文展开信号,点击加载曲线,**多信号叠加**(最多 6 个,颜色区分)
-- **信号时序曲线**(uPlot):十字光标实时读数(时间/全部信号值/单位)
-- **框选缩放**(拖拽)、**滚轮缩放**(以鼠标为中心)、重置缩放按钮
+- 报文/信号树:按报文展开信号,点击加载曲线,**多示波器窗口**(最多 64 个信号,同窗共享 y 轴,颜色区分)
+- **信号时序曲线**(Chart.js):独立时间轴、光标竖线同步(全窗口)、tooltip 读数(值表信号显示 名称(值))
+- **CANoe 式播放**:配置信号 → 点播放 → 后端逐帧解析经 WebSocket 推送,曲线在固定时间轴上动态增长(速率 0.5x~5x,进度条拖拽定位)
+- **缩放/平移**:普通滚轮=页面滚动,Ctrl+滚轮=缩放(限窗 0.5s,全窗口同步),拖拽平移,重置按钮;x 范围钳制 [0,日志时长]
+- **测量锚点**:点击设锚点,红色竖线全窗口同步,显示 Δt/频率
 - **Trace 报文流**:报文帧表格(时间/ID/DLC/hex 数据/解码信号值),分页浏览
 - **ID 统计**:各报文帧数/频率横向条形图
 - **导出 CSV**:工具栏按钮,导出当前报文全部信号(带 UTF-8 BOM,Excel 可直接打开)
@@ -111,11 +114,13 @@ python3 -m uvicorn app.main:app --port 8000
 | `GET /api/dbc/{name}/messages/{frame_id}` | 信号详情(frame_id 支持十进制或 0x 前缀) |
 | `GET /api/blf/{name}/stats` | BLF 流式统计(帧数/频率/错误帧/按 ID 聚合) |
 | `GET /api/blf/{name}/decode?dbc=&frame_id=&signal=&start=&end=&max_points=` | 信号解码时间序列(区间过滤 + 降采样) |
+| `GET /api/blf/{name}/signal-stats` / `cycle-stats` / `bus-load` | 信号统计 / 报文周期抖动 / 总线负载 |
+| `WS /ws/replay` | 播放通道(config/play/pause/stop/seek/rate;batch 帧批次推送) |
 
-> ⚠️ macOS 上可能存在多个 Python 解释器(pip 安装用的与 PATH 中的 `python3` 不一致),务必用**同一个**解释器执行 pip install 与 uvicorn,否则报 `No module named uvicorn`。
+ > 💡 依赖统一由 **uv** 管理(`uv sync` 自动解析依赖并锁定 `uv.lock`),不再依赖系统 Python 的 pip 包;uvicorn 启动必须用 `.venv` 内的解释器(或 `uv run`),避免与系统 Python 混淆。
 
 ## 运行环境
 
-- 开发机:macOS(当前)/ 任意平台
-- 部署机:树莓派 4(建议 ≥4GB RAM)或 5,Raspberry Pi OS(Bookworm, ARM64)
-- Python ≥ 3.9(代码兼容 3.9,注解已用 `Optional`/`from __future__ import annotations`)
+- 开发机:macOS(当前)/ 任意平台,需安装 [uv](https://docs.astral.sh/uv/)
+- 部署机:树莓派 4(建议 ≥4GB RAM)或 5,Raspberry Pi OS(Bookworm, ARM64)—— 同样用 uv 管理(ARM64 有预编译 wheel)
+- Python ≥ 3.10(uv 自动选用)
