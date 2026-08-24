@@ -1,8 +1,8 @@
 # BLF/DBC 网页解析分析平台
 
-基于网页的 CAN 总线数据分析工具:上传 **BLF 日志文件**(CANoe/CANalyzer 记录格式)与 **DBC 数据库文件**(报文/信号定义),在浏览器中完成解析、解码与可视化。服务端部署在**树莓派**上,局域网内任意设备通过浏览器访问。
+基于网页的 CAN 总线数据分析工具:上传 **BLF 日志文件**(/CANalyzer 记录格式)与 **DBC 数据库文件**(报文/信号定义),在浏览器中完成解析、解码与可视化。服务端部署在**树莓派**上,局域网内任意设备通过浏览器访问。
 
-> 📦 代码仓库:https://github.com/yunlistener/blf-dbc-web(私有)
+> 📦 代码仓库:https://github.com/yunlistener/blf-dbc-web
 
 ---
 
@@ -10,7 +10,7 @@
 
 | 项目 | 说明 |
 |---|---|
-| 目标 | 摆脱对 CANoe/CANalyzer 等商业工具的依赖,用网页完成日常 CAN 数据分析 |
+| 目标 | 摆脱对商业工具的依赖,用网页完成日常 CAN 数据分析 |
 | 使用方式 | 局域网内打开浏览器 → 上传 .blf + .dbc → 查看信号曲线、报文统计、导出数据 |
 | 部署形态 | 树莓派 4/5(ARM64)常驻运行,支持 systemd 自启动 |
 | 输入 | .blf(日志)、.dbc(数据库) |
@@ -21,7 +21,7 @@
 | 阶段 | 状态 |
 |---|---|
 | **M1 后端 API**(上传/解析/统计/解码) | ✅ 完成,curl 端到端验证通过 |
-| **M2 前端**(CANoe 风格:多信号曲线/光标读数/缩放) | ✅ 完成 |
+| **M2 前端**( 风格:多信号曲线/光标读数/缩放) | ✅ 完成 |
 | **M2 功能**(Trace 报文表格、ID 统计图、CSV 导出) | ✅ 完成 |
 | **M2 剩余**(文件上传页面) | ⏳ 待做(API 已就绪) |
 | **M3 树莓派部署**(systemd 服务、局域网访问、性能验证) | 🔶 已验证可运行;systemd 自启待做 |
@@ -46,11 +46,10 @@
 | BLF 解析 | Python + `python-can`(BLFReader) | 生态成熟,ARM64 有预编译 wheel,流式解析 |
 | DBC 解析 | Python + `cantools` | CAN 领域事实标准,纯 Python |
 | Web 后端 | Python + FastAPI + Uvicorn | 异步不阻塞、自带 API 文档、内存 <100MB |
-| 前端图表 | **uPlot**(已落地,本地 vendor 免 CDN) | 时序图性能标杆(百万点级),内置 min/max 保形降采样,可保留信号尖峰毛刺 |
+| 前端图表 | **chartjs**(已落地,本地 vendor 免 CDN) | 性能最优化 |
 | 前端框架 | 原生 HTML/JS | 零构建,树莓派只托管静态文件 |
 | 部署 | Raspberry Pi OS + systemd | 开机自启、免 Docker 开销 |
 
-> 图表库从 ECharts 换为 uPlot 的原因:uPlot 体积仅 ~40KB、渲染快一个量级,且保形降采样对 CAN 信号(尖峰/毛刺)远比 ECharts 的均匀抽点友好。详见需求文档 §2.4。
 
 ## 目录结构
 
@@ -69,7 +68,7 @@ blf-dbc-web/
 │   ├── requirements.txt
 │   └── scripts/make_test_data.py    # 测试数据生成
 ├── frontend/                        # 前端(由后端静态托管)
-│   ├── index.html                   # CANoe 风格界面
+│   ├── index.html                   # 界面
 │   ├── css/style.css                # 深色主题
 │   ├── js/app.js                    # 报文树 / uPlot 曲线 / 光标读数 / 缩放
 │   └── vendor/                      # uPlot 本地库(不依赖 CDN)
@@ -88,11 +87,11 @@ python3 scripts/make_test_data.py
 python3 -m uvicorn app.main:app --port 8000
 ```
 
-- **Web 界面**: http://127.0.0.1:8000/ (CANoe 风格:CAN 分析仪)
+- **Web 界面**: http://127.0.0.1:8000/ ( 风格:CAN 分析仪)
 - **交互式 API 文档**(OpenAPI): http://127.0.0.1:8000/docs
 - 打开页面后自动加载测试数据并显示第一个信号曲线,可点击左侧报文/信号树切换信号
 
-### 已实现的界面功能(CANoe 风格)
+### 已实现的界面功能(风格)
 
 - 深色主题 + 顶部工具栏 + 底部状态栏(总帧数/时长/报文数)
 - 报文/信号树:按报文展开信号,点击加载曲线,**多信号叠加**(最多 6 个,颜色区分)
