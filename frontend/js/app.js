@@ -881,7 +881,16 @@ async function saveConfig() {
       body: JSON.stringify(payload),
     });
     document.getElementById("config-drawer").classList.remove("open");  // 保存后缩回
-    await loadFiles();   // loadFiles 会用 state.config 重新加载
+    if (blfChanged) {
+      await loadFiles();   // BLF 变了 → 全量重新加载(重扫 stats,大文件会弹进度遮罩)
+    } else {
+      // 仅通道 DBC 映射变化:轻量重建通道映射 + 信号树(不重扫 stats,避免大文件重复弹"正在处理")
+      const chanCfg = state.config.channels || {};
+      state.channels = state.channels.map(c => ({
+        ...c, dbc: chanCfg[String(c.channel)] || null, messages: null,
+      }));
+      await loadDbcTree();
+    }
     showTip("配置已保存并应用");
   } catch (e) {
     tip.textContent = "保存失败: " + e.message;

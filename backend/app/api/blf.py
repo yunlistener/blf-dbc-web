@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import csv
 import io
+import threading
 from collections import defaultdict
 from pathlib import Path
 from typing import Optional
@@ -43,16 +44,29 @@ def _resolve_dbc(dbc: Optional[str], channel: Optional[int]) -> str:
     return dbc
 
 
-@router.get("/{name}/stats")
+# stats 内存缓存(大文件全扫 1.5s+;按文件 size+mtime 失效,文件不变直接命中)
+_stats_cache: dict[str, tuple[tuple, dict]] = {}
+_stats_lock = threading.Lock()
+
+
 @router.get("/{name}/stats")
 def get_stats(name: str):
     blf_path = _blf_path(name)
+    st = blf_path.stat()
+    sig = (st.st_size, st.st_mtime_ns)
+    with _stats_lock:
+        hit = _stats_cache.get(name)
+        if hit and hit[0] == sig:
+            return hit[1]
     key = f"stats:{name}"
     set_progress(key, "扫描帧", 0.0)
     try:
-        return blf_stats(blf_path, progress_cb=lambda p: set_progress(key, "扫描帧", p))
+        result = blf_stats(blf_path, progress_cb=lambda p: set_progress(key, "扫描帧", p))
     finally:
         clear_progress(key)
+    with _stats_lock:
+        _stats_cache[name] = (sig, result)
+    return result
 @router.get("/{name}/decode")
 def get_decode(name: str, dbc: Optional[str] = None, frame_id: str = "",
                signal: str = "", channel: Optional[int] = None,
