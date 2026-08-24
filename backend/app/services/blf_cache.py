@@ -199,6 +199,27 @@ def finish_build(path: Path):
         _building.discard(str(path))
 
 
+def build_async(path: Path) -> bool:
+    """后台线程构建索引(上传后/无缓存时):立即返回,不阻塞请求。
+    带进度跟踪(progress.py),前端遮罩可见;已在构建/已有缓存则跳过。"""
+    if not start_build(path):
+        return False
+    from app.services.progress import clear_progress, set_progress
+
+    key = f"index:{path.stem}"
+    set_progress(key, "后台构建索引(首次加载,大文件较慢)", 0.0)
+
+    def _work():
+        try:
+            load_index(path, progress_cb=lambda p: set_progress(key, "后台构建索引(首次加载,大文件较慢)", p))
+        finally:
+            clear_progress(key)
+            finish_build(path)
+
+    threading.Thread(target=_work, daemon=True).start()
+    return True
+
+
 def get_frames(path: Path, frame_id: int, channel: Optional[int] = None,
                start: Optional[float] = None, end: Optional[float] = None,
                progress_cb=None) -> list:

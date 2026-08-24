@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
 from app.config import ALLOWED_EXTENSIONS, UPLOAD_DIR
-from app.services.blf_cache import invalidate as cache_invalidate
+from app.services.blf_cache import build_async, invalidate as cache_invalidate
 
 router = APIRouter()
 
@@ -57,7 +57,10 @@ async def upload(file: UploadFile = File(...)):
         while chunk := await file.read(1024 * 1024):
             f.write(chunk)
     cache_invalidate(dest)   # 同名覆盖/重传 → 旧索引失效
-    return {"name": dest.name, "size": dest.stat().st_size, "kind": detect_kind(dest)}
+    kind = detect_kind(dest)
+    if kind == ".blf":
+        build_async(dest)    # 后台构建索引,上传立即返回不阻塞
+    return {"name": dest.name, "size": dest.stat().st_size, "kind": kind}
 
 
 @router.delete("/{name}")

@@ -16,7 +16,7 @@ from app.config import UPLOAD_DIR
 from app.parsers.blf_parser import stats as blf_stats
 from app.services.blf_cache import get_stats as cache_stats
 from app.services.blf_cache import load_index as cache_load
-from app.services.blf_cache import partial_channels
+from app.services.blf_cache import build_async, partial_channels
 from app.parsers.dbc_parser import load_database
 from app.services.decoder import decode_signal
 from app.services.progress import clear_progress, set_progress
@@ -79,6 +79,7 @@ def get_meta(name: str):
     else:
         channels = partial_channels(blf_path)
         cached = False
+        build_async(blf_path)   # 后台构建,通道列表后续自动修正
     return {
         "frames": frames,                       # 近似(含非帧对象,误差 <0.1%)
         "duration_s": round(stop - start, 4),
@@ -91,16 +92,14 @@ def get_meta(name: str):
 
 @router.get("/{name}/stats")
 def get_stats(name: str):
+    """stats:有缓存秒回;无缓存 → 触发后台构建,立即返回 202(前端显示进度,完成后重试)。"""
     blf_path = _blf_path(name)
-    key = f"index:{name}"
-    set_progress(key, "扫描帧(构建索引)", 0.0)
-    try:
-        result = cache_stats(blf_path, progress_cb=lambda p: set_progress(key, "扫描帧(构建索引)", p))
-    finally:
-        clear_progress(key)
-    if result is None:
-        raise HTTPException(500, f"无法解析 {name}")
-    return result
+    bundle = cache_load(blf_path, build=False)
+    if bundle is None:
+        from fastapi.responses import JSONResponse
+        build_async(blf_path)
+        return JSONResponse(status_code=202, content={"status": "building", "name": name})
+    return bundle.stats
 @router.get("/{name}/decode")
 def get_decode(name: str, dbc: Optional[str] = None, frame_id: str = "",
                signal: str = "", channel: Optional[int] = None,

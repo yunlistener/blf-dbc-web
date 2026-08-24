@@ -898,6 +898,22 @@ async function saveConfig() {
 }
 
 /* ---------- 数据加载 ---------- */
+/* stats:有缓存秒回;无缓存后端返回 202 → 轮询等待(后台构建,进度条可见) */
+async function loadStats(name, tries = 0) {
+  try {
+    const r = await fetch(`/api/blf/${encodeURIComponent(name)}/stats`);
+    if (r.status === 202) {   // 后台构建中
+      await new Promise(res => setTimeout(res, 1000));
+      return await loadStats(name, tries + 1);
+    }
+    return await r.json();
+  } catch (e) {
+    if (tries > 600) throw e;
+    await new Promise(res => setTimeout(res, 1000));
+    return await loadStats(name, tries + 1);
+  }
+}
+
 async function loadFiles() {
   const { files } = await api("/api/files");
   const blfs = files.filter(f => f.kind === ".blf");
@@ -921,7 +937,7 @@ async function loadFiles() {
   document.getElementById("busload-box").dataset.loaded = "";   // 文件切换 → Bus Load 重新加载
   state.trace = { frameId: null, channel: null, offset: 0, limit: 200, search: null, range: null };
 
-  state.stats = await api(`/api/blf/${state.blf}/stats`);
+  state.stats = await loadStats(state.blf);
   state.t0 = state.stats.first_timestamp || 0;   // 绝对时间基准:曲线/读数/表格显示相对时间
   state.hasData = new Set((state.stats.by_id || []).map(e => e.frame_id));  // 日志中实际出现的报文
   // 构建通道列表:每通道 DBC 只来自通道映射(不自动兜底,未配置即空,由用户指定)
