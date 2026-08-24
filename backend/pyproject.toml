@@ -9,6 +9,7 @@ dependencies = [
     "python-can>=4.4",
     "cantools>=39.0",
     "python-multipart>=0.0.9",
+    "numpy>=1.26",   # 批次1 两级索引紧凑存储(ts/off 数组 + searchsorted 二分)
 ]
 
 [tool.uv]
