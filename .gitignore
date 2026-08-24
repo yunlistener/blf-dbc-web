@@ -17,3 +17,5 @@ data/uploads/*
 .env
 *.pem
 backend/data/uploads/
+data/config.json
+data/cache/
