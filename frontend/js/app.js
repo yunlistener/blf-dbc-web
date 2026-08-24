@@ -186,6 +186,9 @@ function onJitterMarkToggle() {
   renderOverlays();
 }
 
+
+
+
 /* 发送 ECU 的彩色 tag HTML(信号所属报文的第一发送者) */
 function ecuTagHtml(s) {
   const ecu = s.senders && s.senders.length ? s.senders[0] : "";
@@ -634,6 +637,37 @@ function applyXRange(range, src) {
   });
   syncingX = false;
   renderOverlays();
+  scheduleLazyLoad();   // 停止后缩放 → 按需懒加载未解码窗口
+}
+
+/* ---------- 批次3:缩放懒加载 ---------- */
+/* 停止后缩放:窗口超出已解码范围 → 按需 decode 该窗口(相对秒),替换显示 */
+let lazyTimer = null;
+function scheduleLazyLoad() {
+  clearTimeout(lazyTimer);
+  lazyTimer = setTimeout(loadVisibleWindow, 300);
+}
+
+async function loadVisibleWindow() {
+  if (playState.playing || !state.xRange || !state.signals.length) return;
+  const { min, max } = state.xRange;
+  for (const s of state.signals) {
+    // 已解码覆盖范围:播放累积 s.data 的末时间(相对秒)
+    const t = s.data.times;
+    const coverEnd = t.length ? t[t.length - 1] : 0;
+    if (max <= coverEnd + 0.05) continue;   // 窗口在已解码范围内 → 用播放数据
+    if (!s.dbc) continue;
+    const dbc = encodeURIComponent(s.dbc);
+    const url = `/api/blf/${encodeURIComponent(state.blf)}/decode?dbc=${dbc}` +
+      `&frame_id=${s.frame_id}&signal=${encodeURIComponent(s.signal)}&channel=${s.channel}` +
+      `&start=${min.toFixed(3)}&end=${max.toFixed(3)}&max_points=200000`;
+    try {
+      const d = await api(url);
+      if (!d.times || !d.times.length) { s.winData = { times: [], values: [] }; continue; }
+      s.winData = { times: d.times.map(t => t - state.t0), values: d.values };
+      draw();
+    } catch (e) { /* 网络/解析失败静默,下次缩放重试 */ }
+  }
 }
 
 /* overlay 重绘:锚点红线/同步竖线/抖动标记 → 触发各窗口 plugin 重绘 */
@@ -646,8 +680,10 @@ function updateSeriesData(p) {
   const sigs = p.sigs;
   const ds = [];
   sigs.forEach(s => {
+    // 批次3 数据源:播放中 → 播放累积;停止后 → 懒加载窗口(若有)否则播放数据
+    const src = playState.playing ? s.data : (s.winData || s.data);
     const data = [];
-    const t = s.data.times, v = s.data.values;
+    const t = src.times, v = src.values;
     for (let i = 0; i < t.length; i++) {
       const raw = v[i];
       const val = (raw != null && typeof raw === "object" && "value" in raw) ? raw.value : raw;
@@ -822,7 +858,9 @@ async function refreshBlfViews(files) {
     // 通道预览:按当前选中 BLF 的通道渲染;未保存的新选择 → 映射视为空(待重新配置)
     const blfChanged = blfName !== (state.config.blf || null);
     const chanCfg = blfChanged ? {} : (state.config.channels || {});
-    const chans = st.channels || [{ channel: 0, frames: st.total_frames }];
+    const chansRaw = st.channels || [];
+    const chans = (chansRaw.length && typeof chansRaw[0] === "object") ? chansRaw
+      : chansRaw.map(c => ({ channel: c, frames: 0 }));
     renderChanList(chans, chanCfg, dbcs);
   } catch (e) {
     infoBox.innerHTML = `<span class="blf-err">解析失败: ${e.message}</span>`;
@@ -938,13 +976,19 @@ async function loadFiles() {
   state.trace = { frameId: null, channel: null, offset: 0, limit: 200, search: null, range: null };
 
   state.stats = await loadStats(state.blf);
-  state.t0 = state.stats.first_timestamp || 0;   // 绝对时间基准:曲线/读数/表格显示相对时间
-  state.hasData = new Set((state.stats.by_id || []).map(e => e.frame_id));  // 日志中实际出现的报文
+  // ⚠️ 批次1 stats 格式:by_id 为 dict{id:count}、channels 简化为 [0,1]、first_ts;兼容旧数组格式
+  const st = state.stats || {};
+  state.t0 = st.first_ts || st.first_timestamp || 0;   // 绝对时间基准
+  const byId = st.by_id || {};
+  state.hasData = new Set(Array.isArray(byId) ? byId.map(e => e.frame_id) : Object.keys(byId).map(Number));
+  const rawCh = st.channels || [];
+  const chanList = (rawCh.length && typeof rawCh[0] === "object")
+    ? rawCh : rawCh.map(c => ({ channel: c, frames: 0 }));
   // 构建通道列表:每通道 DBC 只来自通道映射(不自动兜底,未配置即空,由用户指定)
   const chanCfg = state.config.channels || {};
-  state.channels = (state.stats.channels || [{ channel: 0, frames: state.stats.total_frames }]).map(c => ({
+  state.channels = (chanList.length ? chanList : [{ channel: 0, frames: st.total_frames }]).map(c => ({
     channel: c.channel,
-    frames: c.frames,
+    frames: c.frames || 0,
     dbc: chanCfg[String(c.channel)] || null,
     messages: null,
   }));
@@ -1200,26 +1244,21 @@ async function addSignal(msg, signal, channel, plotId) {
     return false;
   }
 
-  let detail, data;
+  let detail;
   try {
     detail = await api(`/api/dbc/${dbc}/messages/${msg.frame_id_hex}`);
-    data = await api(`/api/blf/${state.blf}/decode?dbc=${encodeURIComponent(dbc)}` +
-      `&frame_id=${msg.frame_id_hex}&signal=${encodeURIComponent(signal)}&channel=${channel}&max_points=200000`);
   } catch (e) {
     showTip(`加载失败: ${e.message}`);
     return false;
   }
-  if (!data.times || !data.times.length) {
-    showTip(`报文 ${msg.frame_id_hex} 在日志中无数据(该通道未发送),无法画曲线`);
-    return false;
-  }
+  // 批次3:选信号仅订阅(不画曲线),曲线在播放时边解码边出现;缩放未解码区域按需懒加载
   const sigDef = detail.signals.find(s => s.name === signal);
   const unit = sigDef?.unit || "";
   const choices = sigDef?.choices || null;    // 值表信号:读数显示名称
   const comment = sigDef?.comment || "";      // 信号说明文字
   const senders = detail.senders || [];       // 发送 ECU
 
-  data.times = data.times.map(t => t - state.t0);   // 绝对 → 相对时间
+  const data = { times: [], values: [] };   // 仅订阅:播放时填充
   const usedSlots = new Set(state.signals.map(s => s.slot));
   const slot = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
                 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
@@ -1227,7 +1266,7 @@ async function addSignal(msg, signal, channel, plotId) {
                 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58,
                 59, 60, 61, 62, 63, 64].find(i => !usedSlots.has(i));
   state.signals.push({ frame_id: msg.frame_id, signal, unit, color, slot, data, channel, dbc, choices, comment, senders, plotId: pid,
-    staticData: { times: data.times.slice(), values: data.values.slice() } });   // 静态全量副本:播放结束/停止时恢复,防止播放残留数据覆盖
+    winData: null });   // winData:停止后缩放懒加载的窗口数据
   saveSelectedSignals();
   draw();
   if (currentTab() === "sigstats") loadSigStats();
@@ -1536,7 +1575,8 @@ function tracePage(dir) {
 /* ---------- ID 统计 ---------- */
 function renderStats() {
   const box = document.getElementById("stats-box");
-  const ids = state.stats.by_id;
+  const byId2 = state.stats.by_id || {};
+  const ids = Array.isArray(byId2) ? byId2 : Object.entries(byId2).map(([id, count]) => ({ frame_id: Number(id), count }));
   if (!ids.length) { box.innerHTML = `<div class="hint">无数据</div>`; return; }
   const max = Math.max(...ids.map(e => e.count));
   box.innerHTML = ids.map(e => {
@@ -1765,9 +1805,8 @@ function sendReplay(msg) {
 /* 重置播放累积(清空曲线数据) */
 /* 播放结束后恢复静态全量数据(播放数据只是临时覆盖,防止残留稀疏数据) */
 function restoreStaticData() {
-  for (const s of state.signals) {
-    if (s.staticData) s.data = { times: s.staticData.times.slice(), values: s.staticData.values.slice() };
-  }
+  // 批次3:停止/结束后保留播放数据(曲线停在播放位置),不恢复全量;清窗口懒加载
+  state.signals.forEach(s => { s.winData = null; });
 }
 
 function resetPlayData() {
@@ -1783,6 +1822,7 @@ function startPlayback() {
   playState.renderPending = false;
   state.xRange = null;   // 播放开始时 x 范围由首批数据/state 决定,之后固定
   if (!playState.ws || playState.ws.readyState !== 1) connectReplay();
+  state.signals.forEach(s => { s.winData = null; });   // 播放开始清窗口懒加载
   resetPlayData();
   draw();   // 清空曲线
   const subs = state.signals.map(s => ({
