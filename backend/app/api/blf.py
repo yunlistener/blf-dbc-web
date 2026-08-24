@@ -14,6 +14,9 @@ from fastapi.responses import Response
 
 from app.config import UPLOAD_DIR
 from app.parsers.blf_parser import stats as blf_stats
+from app.services.blf_cache import get_stats as cache_stats
+from app.services.blf_cache import load_index as cache_load
+from app.services.blf_cache import partial_channels
 from app.parsers.dbc_parser import load_database
 from app.services.decoder import decode_signal
 from app.services.progress import clear_progress, set_progress
@@ -44,28 +47,59 @@ def _resolve_dbc(dbc: Optional[str], channel: Optional[int]) -> str:
     return dbc
 
 
-# stats 内存缓存(大文件全扫 1.5s+;按文件 size+mtime 失效,文件不变直接命中)
-_stats_cache: dict[str, tuple[tuple, dict]] = {}
-_stats_lock = threading.Lock()
+def _rel_to_abs(blf_path, start, end):
+    """start/end(相对秒)→ 绝对时间戳(索引 ts 是绝对);无缓存时以文件头首帧为基准。"""
+    t0 = None
+    b = cache_load(blf_path, build=False)
+    if b is not None:
+        t0 = b.stats.get("first_ts")
+    if t0 is None:
+        try:
+            with can.BLFReader(str(blf_path)) as r:
+                t0 = r.start_timestamp
+        except Exception:
+            t0 = 0.0
+    return ((start + t0) if start is not None else None,
+            (end + t0) if end is not None else None)
+
+
+@router.get("/{name}/meta")
+def get_meta(name: str):
+    """基本信息(零扫描):文件头秒拿帧数/时长/时间;通道走缓存或部分扫描前 2 万帧。"""
+    blf_path = _blf_path(name)
+    try:
+        with can.BLFReader(str(blf_path)) as r:
+            frames, start, stop = r.object_count, r.start_timestamp, r.stop_timestamp
+    except Exception as e:
+        raise HTTPException(500, f"BLF 文件头解析失败: {e}")
+    bundle = cache_load(blf_path, build=False)
+    if bundle is not None:
+        channels = bundle.channels
+        cached = True
+    else:
+        channels = partial_channels(blf_path)
+        cached = False
+    return {
+        "frames": frames,                       # 近似(含非帧对象,误差 <0.1%)
+        "duration_s": round(stop - start, 4),
+        "start_timestamp": start, "stop_timestamp": stop,
+        "channels": channels,
+        "index_cached": cached,
+        "file_size": blf_path.stat().st_size,
+    }
 
 
 @router.get("/{name}/stats")
 def get_stats(name: str):
     blf_path = _blf_path(name)
-    st = blf_path.stat()
-    sig = (st.st_size, st.st_mtime_ns)
-    with _stats_lock:
-        hit = _stats_cache.get(name)
-        if hit and hit[0] == sig:
-            return hit[1]
-    key = f"stats:{name}"
-    set_progress(key, "扫描帧", 0.0)
+    key = f"index:{name}"
+    set_progress(key, "扫描帧(构建索引)", 0.0)
     try:
-        result = blf_stats(blf_path, progress_cb=lambda p: set_progress(key, "扫描帧", p))
+        result = cache_stats(blf_path, progress_cb=lambda p: set_progress(key, "扫描帧(构建索引)", p))
     finally:
         clear_progress(key)
-    with _stats_lock:
-        _stats_cache[name] = (sig, result)
+    if result is None:
+        raise HTTPException(500, f"无法解析 {name}")
     return result
 @router.get("/{name}/decode")
 def get_decode(name: str, dbc: Optional[str] = None, frame_id: str = "",
@@ -92,9 +126,14 @@ def get_decode(name: str, dbc: Optional[str] = None, frame_id: str = "",
         raise HTTPException(404, f"报文 {hex(fid)} 无信号 {signal}")
 
     key = f"index:{name}"
+    # start/end 语义 = 相对秒(对齐前端/播放);索引 ts 是绝对时间戳 → 加日志起始时间转换
+    bundle0 = cache_load(blf_path, build=False)
+    t0 = (bundle0.stats.get("first_ts") if bundle0 else None) or 0.0
+    abs_start = (start + t0) if start is not None else None
+    abs_end = (end + t0) if end is not None else None
     set_progress(key, "构建帧索引(首次解码,大文件较慢)", 0.0)
     try:
-        result = decode_signal(blf_path, db, fid, signal, start, end, max_points,
+        result = decode_signal(blf_path, db, fid, signal, abs_start, abs_end, max_points,
                                channel=channel,
                                progress_cb=lambda p: set_progress(key, "构建帧索引(首次解码,大文件较慢)", p))
     finally:
@@ -154,7 +193,8 @@ def get_frames(name: str, dbc: Optional[str] = None, frame_id: str = "",
 
     frames = []
     skipped = 0
-    for ts, ch, data, is_fd, dlc in cache_get_frames(blf_path, fid, channel=channel, start=start, end=end):
+    a_start, a_end = _rel_to_abs(blf_path, start, end)
+    for ts, ch, data, is_fd, dlc in cache_get_frames(blf_path, fid, channel=channel, start=a_start, end=a_end):
         if sig_filter is not None:
             try:
                 dec = db.decode_message(fid, data)

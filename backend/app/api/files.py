@@ -5,6 +5,7 @@ from pathlib import Path
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
 from app.config import ALLOWED_EXTENSIONS, UPLOAD_DIR
+from app.services.blf_cache import invalidate as cache_invalidate
 
 router = APIRouter()
 
@@ -55,6 +56,7 @@ async def upload(file: UploadFile = File(...)):
     with dest.open("wb") as f:
         while chunk := await file.read(1024 * 1024):
             f.write(chunk)
+    cache_invalidate(dest)   # 同名覆盖/重传 → 旧索引失效
     return {"name": dest.name, "size": dest.stat().st_size, "kind": detect_kind(dest)}
 
 
@@ -64,4 +66,5 @@ def delete_file(name: str):
     if not dest.is_relative_to(UPLOAD_DIR.resolve()) or not dest.is_file():
         raise HTTPException(404, "文件不存在")
     dest.unlink()
+    cache_invalidate(dest)
     return {"deleted": name}
