@@ -41,6 +41,11 @@ class FrameSource(ABC):
     def close(self) -> None:
         """释放资源。"""
 
+    @property
+    @abstractmethod
+    def time_range(self) -> tuple[float, float]:
+        """数据时间范围(相对秒):(首帧, 末帧)。空窗判断依据。"""
+
 
 class BlfReplaySource(FrameSource):
     """离线 BLF 回放源(批次 4):直接适配紧凑两级索引(通道→报文→FrameChunk),

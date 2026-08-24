@@ -59,8 +59,13 @@ class PlaybackEngine:
         """
         frames = self.source.next_batch(max_frames, end_t=play_time)
         if not frames:
-            self._ended = True
-            return None
+            # 空窗(该时段无订阅信号帧,如信号丢失期):源已到末尾才结束,否则跳过继续
+            if play_time >= self.source.time_range[1] - 1e-6:
+                self._ended = True
+                return None
+            self._seq += 1
+            return {"type": "batch", "seq": self._seq, "t1": round(play_time, 6),
+                    "frames": 0, "signals": {}}
 
         sig_data: dict[str, dict] = defaultdict(lambda: {"times": [], "values": []})
         for f in frames:

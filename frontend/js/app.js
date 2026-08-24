@@ -905,8 +905,9 @@ async function saveConfig() {
     baudrate_arb: parseInt(document.getElementById("cfg-baud-arb").value, 10),
     baudrate_data: parseInt(document.getElementById("cfg-baud-data").value, 10),
     blf: document.getElementById("cfg-blf").value || null,
-    // BLF 变更 → 通道映射重置(不同 BLF 的通道/网络不同,旧映射无意义,默认为空)
-    channels: blfChanged ? {} : channels,
+    // ⚠️ 始终用表单中的通道映射(不再因 BLF 变更清空:用户常在同一次配置里选 BLF+配 DBC,
+    // 清空会导致第一次保存丢映射、要点两次才刷新树;新 BLF 不存在的通道由 loadFiles 自然忽略)
+    channels,
   };
   if (!payload.blf) {
     tip.textContent = "请选择 Bus Log 文件";
