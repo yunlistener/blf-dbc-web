@@ -2,10 +2,9 @@
   "bus_type": "canfd",
   "baudrate_arb": 500000,
   "baudrate_data": 2000000,
-  "blf": "T1V-CH-DA-log-2026-06-08_13-39-50.blf",
-  "dbc": "EEA(5.1)_Message_List_version2.1.1_FL_CH_CANFD_ADCC_20260604160944.dbc",
+  "blf": "test.blf",
+  "dbc": "test.dbc",
   "channels": {
-    "0": "EEA(5.1)_Message_List_version2.1.1_FL_CH_CANFD_ADCC_20260604160944.dbc",
-    "1": "EEA(5.1)_Message_List_version2.1.1_FL_CH_CANFD_ADCC_20260604160944.dbc"
+    "0": "test.dbc"
   }
 }
