@@ -9,6 +9,25 @@ from app.config import ALLOWED_EXTENSIONS, UPLOAD_DIR
 router = APIRouter()
 
 
+BLF_MAGIC = b"LOGG"
+
+
+def detect_kind(path: Path) -> str:
+    """按内容识别文件类型(扩展名不可靠:Windows 上传 .log/.txt 内容可能是 BLF/DBC)。
+    BLF:文件头 "LOGG";DBC:文本含 VERSION/BO_/SG_ 特征。识别不出按扩展名兜底。"""
+    try:
+        with path.open("rb") as f:
+            head = f.read(256)
+    except OSError:
+        return path.suffix.lower()
+    if head[:4] == BLF_MAGIC:
+        return ".blf"
+    text = head.decode("utf-8", errors="ignore").lstrip("\ufeff \t")
+    if text.startswith("VERSION") or b"BO_" in head or b"SG_ " in head:
+        return ".dbc"
+    return path.suffix.lower()
+
+
 @router.get("")
 def list_files():
     files = []
@@ -17,7 +36,7 @@ def list_files():
             files.append({
                 "name": p.name,
                 "size": p.stat().st_size,
-                "kind": p.suffix.lower(),
+                "kind": detect_kind(p),
             })
     return {"files": files}
 
@@ -36,7 +55,7 @@ async def upload(file: UploadFile = File(...)):
     with dest.open("wb") as f:
         while chunk := await file.read(1024 * 1024):
             f.write(chunk)
-    return {"name": dest.name, "size": dest.stat().st_size, "kind": dest.suffix.lower()}
+    return {"name": dest.name, "size": dest.stat().st_size, "kind": detect_kind(dest)}
 
 
 @router.delete("/{name}")

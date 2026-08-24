@@ -86,7 +86,7 @@ dropZone.addEventListener("dragleave", () => dropZone.classList.remove("drag-ove
 dropZone.addEventListener("drop", (e) => {
   e.preventDefault();
   dropZone.classList.remove("drag-over");
-  pendingFiles = Array.from(e.dataTransfer.files || []).filter(f => /\.(blf|dbc)$/i.test(f.name));
+  pendingFiles = Array.from(e.dataTransfer.files || []).filter(f => /\.(blf|dbc|log|txt)$/i.test(f.name));
   renderUploadList();
 });
 
