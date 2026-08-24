@@ -823,8 +823,11 @@ async function fillConfig() {
   data.value = String(cfg.baudrate_data || 2000000);
   if (![...data.options].some(o => o.value === data.value)) data.value = "2000000";
   syncBusTypeUI();
-  // 文件下拉
-  const { files } = await api("/api/files");
+  // 文件下拉(容错:api 失败时下拉为空列表而非中断填充)
+  let files = [];
+  try {
+    ({ files } = await api("/api/files"));
+  } catch (e) { files = []; }
   const blfSel = document.getElementById("cfg-blf");
   blfSel.innerHTML = '<option value="">— 请选择 —</option>' + files
     .filter(f => f.kind === ".blf")
@@ -1775,8 +1778,13 @@ document.getElementById("cfg-blf").addEventListener("change", () => refreshBlfVi
 
 async function init() {
   try { state.config = await api("/api/config"); } catch (e) { state.config = {}; }
-  await loadFiles();
-  fillConfig();        // 填充配置抽屉(BusLog 下拉/通道 DBC 映射)—— 渲染层替换时丢失的调用
+  fillConfig();        // ⚠️ 先填充配置抽屉(BusLog 下拉/通道 DBC):独立于 loadFiles,
+                       // 否则 loadFiles 失败(缺 BLF/解析异常)会导致下拉永远空、无法选择
+  try {
+    await loadFiles();
+  } catch (e) {
+    showTip(e.message || "文件加载失败");
+  }
   connectReplay();   // 预连接播放 WS(避免首次播放的连接延迟/失败)
 }
 
