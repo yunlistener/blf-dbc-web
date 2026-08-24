@@ -126,8 +126,12 @@ async function startUpload() {
   btn.textContent = "上传";
   if (ok > 0) {
     showTip(`上传完成:成功 ${ok} 个${fail ? `,失败 ${fail} 个` : ""}`);
-    await loadFiles();   // 重新加载文件列表和报文树
-    closeUpload();
+    try {
+      await loadFiles();   // 重新加载文件列表和报文树(可能因缺 BLF 抛错)
+    } catch (e) {
+      showTip("文件列表刷新失败: " + e.message);
+    }
+    closeUpload();   // 无论刷新成败都关闭上传界面(之前 loadFiles 抛错会卡住不消失)
   } else {
     showTip("上传失败,请检查文件格式(.blf / .dbc)");
     btn.disabled = false;
@@ -1299,6 +1303,20 @@ async function toggleSignal(msg, signal, item, channel) {
   if (item) item.classList.add("active");
   const ok = await addSignal(msg, signal, channel, null);
   if (!ok && item) item.classList.remove("active");
+}
+
+/* ---------- 管理 ---------- */
+/* 强制重启后台服务:POST /api/admin/restart(后端延时换进程)→ 提示 → 自动刷新 */
+async function restartBackend() {
+  if (!confirm("确定重启后台服务?\n页面将短暂断开,已上传的文件保留。")) return;
+  showTip("正在重启后台…");
+  try {
+    await fetch("/api/admin/restart", { method: "POST" });
+  } catch (e) { /* 重启期间连接会断,忽略 */ }
+  setTimeout(() => {
+    showTip("重启完成,刷新页面…");
+    location.reload();
+  }, 4000);
 }
 
 /* ---------- 导出 ---------- */

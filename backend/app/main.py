@@ -4,7 +4,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from app.api import blf, config_api, dbc, files, ws
+from app.api import admin, blf, config_api, dbc, files, ws
 
 app = FastAPI(title="BLF/DBC 网页解析平台", version="0.1.0")
 
@@ -13,6 +13,7 @@ app.include_router(config_api.router, prefix="/api/config", tags=["config"])
 app.include_router(dbc.router, prefix="/api/dbc", tags=["dbc"])
 app.include_router(blf.router, prefix="/api/blf", tags=["blf"])
 app.include_router(ws.router, tags=["replay"])   # /ws/replay
+app.include_router(admin.router, prefix="/api/admin", tags=["admin"])   # /api/admin/restart
 
 
 @app.get("/api/health")
