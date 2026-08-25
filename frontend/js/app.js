@@ -1921,10 +1921,17 @@ function onReplayMsg(m) {
   if (m.type === "batch") { diag.batch++; diag.lastBatchT = Date.now();
     if (!_firstBatchT) {
       _firstBatchT = Date.now();
-      // 自检:2 秒后仍无任何数据 → 提示(定位播放失效)
+      // 自检:2 秒后仍无任何数据 → 提示(区分构建中/WS 异常)
       setTimeout(() => {
         const has = Object.values(playState.data).some(d => d.times.length > 0);
-        if (!has && playState.playing) showTip("⚠ 未收到播放数据(WS 或后端订阅异常),请刷新页面重试");
+        if (!has && playState.playing) {
+          const busy = document.getElementById("busy-toast");
+          if (busy && busy.style.display !== "none") {
+            showTip("⏳ 索引构建中,播放数据随构建推进(大文件早期可能需要等待构建完成)");
+          } else {
+            showTip("⚠ 未收到播放数据(WS 或后端订阅异常),请刷新页面重试");
+          }
+        }
       }, 2000);
     }
     for (const [key, d] of Object.entries(m.signals)) {

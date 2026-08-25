@@ -101,14 +101,21 @@ async def replay_ws(ws: WebSocket) -> None:
                     if dbc_name and dbc_name not in dbs:
                         dbs[s["channel"]] = load_database(UPLOAD_DIR / dbc_name)
                     subs.append(SignalSub(s["frame_id"], s["channel"], s["signal"], dbc_name))
-                # ⚠️ 源选择:索引构建中 → LivePlaySource(全局环形缓冲,边扫边播,不等全扫);
-                #            已就绪 → BlfReplaySource(完整索引,seek 快)
+                # ⚠️ 源选择:索引构建中且 store 未裁剪(早期数据在)→ LivePlaySource 边扫边播;
+                #            已裁剪(大文件环形上限吃掉早期数据)/未在构建 → BlfReplaySource(完整索引)
                 from app.services import blf_cache
                 from app.services.frame_source import LivePlaySource
                 if str(blf_path) in blf_cache._building:
-                    t0 = blf_cache.live_store.first_ts or 0.0
-                    src = LivePlaySource(blf_cache.live_store, t0=t0)
-                    print(f"[ws] 构建中 → LivePlaySource(t0={t0}, store={len(blf_cache.live_store)}帧)")
+                    fs = blf_cache.live_store.first_ts
+                    earliest = blf_cache.live_store.earliest_ts()
+                    trimmed = earliest is None or (fs is not None and earliest - fs > 1.0)
+                    if trimmed:
+                        print(f"[ws] 构建中但 store 已裁剪(earliest={earliest})→ 等构建完成用完整索引")
+                        src = BlfReplaySource(blf_path)   # load_index 内部等待构建完成
+                    else:
+                        t0 = fs or 0.0
+                        src = LivePlaySource(blf_cache.live_store, t0=t0)
+                        print(f"[ws] 构建中 → LivePlaySource(t0={t0}, store={len(blf_cache.live_store)}帧)")
                 else:
                     src = BlfReplaySource(blf_path)
                 engine = PlaybackEngine(src, dbs, subs)
