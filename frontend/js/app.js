@@ -651,7 +651,8 @@ async function showAllData() {
     try {
       const q = `dbc=${encodeURIComponent(s.dbc || "")}&frame_id=${s.frame_id}&signal=${encodeURIComponent(s.signal)}&channel=${s.channel}&start=0&end=${dur}`;
       const d = await api(`/api/blf/${encodeURIComponent(state.blf)}/decode?${q}`);
-      s.winData = { times: d.times || [], values: d.values || [] };
+      // ⚠️ decode 返回绝对时间戳 → 转相对(前端 x 轴 0-duration)
+      s.winData = { times: (d.times || []).map(t => t - state.t0), values: d.values || [] };
       ok++;
     } catch (e) {
       showTip(`加载 ${s.signal} 失败: ${e.message}`);
@@ -705,9 +706,12 @@ function updateSeriesData(p) {
   sigs.forEach(s => {
     // 批次3 数据源:播放中 → 播放累积;停止后 → 懒加载窗口(若有)否则播放数据
     const src = playState.playing ? s.data : (s.winData || s.data);
-    const data = [];
+    // ⚠️ 渲染限点:数据量大(播放到长日志 17 万点+)Chart.js 每帧重绘卡死 → 均匀抽稀到 ≤2 万点
     const t = src.times, v = src.values;
-    for (let i = 0; i < t.length; i++) {
+    const MAX_RENDER = 20000;
+    const step = t.length > MAX_RENDER ? (t.length - 1) / (MAX_RENDER - 1) : 1;
+    const data = [];
+    for (let i = 0; i < t.length; i += Math.max(1, Math.floor(step))) {
       const raw = v[i];
       const val = (raw != null && typeof raw === "object" && "value" in raw) ? raw.value : raw;
       if (val == null) continue;
