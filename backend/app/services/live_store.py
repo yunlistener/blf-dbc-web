@@ -123,6 +123,9 @@ class StoreArchiver:
             "channel INT, frame_id INT, ts REAL, data BLOB, flags INT)")
         self.con.execute(
             "CREATE INDEX IF NOT EXISTS idx_cft ON frames(channel, frame_id, ts)")
+        # ⚠️ ts 单列索引:播放源查询无 channel/frame_id 条件(取所有报文帧按时间),
+        # ORDER BY ts + 范围扫描必须走 ts 索引,否则 686 万行全表排序 → 播放慢到爆
+        self.con.execute("CREATE INDEX IF NOT EXISTS idx_ts ON frames(ts)")
         self._last: dict[tuple, int] = {}   # (ch, fid) -> 已归档行数(store 模式增量游标)
         self.last_ts: float | None = None    # 已写入最大时间戳(播放源判断可读范围/eof)
 
