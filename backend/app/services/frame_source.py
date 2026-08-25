@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import bisect
 import heapq
+import sqlite3
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
@@ -164,6 +165,87 @@ class LivePlaySource(FrameSource):
             lo = min(rows[0][0] for m in self._store.idx.values() for rows in m.values())
             hi = max(rows[-1][0] for m in self._store.idx.values() for rows in m.values())
         return lo - self._t0, hi - self._t0
+
+
+class SqliteFrameSource(FrameSource):
+    """从 SQLite 读帧(磁盘数据源):构建线程边扫边写(StoreArchiver.insert_rows),
+    播放读"已写入部分" → 构建中 1x 播放完整(0-T 已落盘即可读),内存恒定(磁盘为主)。
+
+    - 构建中:is_building()=True → eof 恒 False(数据持续增长);读到的范围 = 已 flush 部分
+    - 构建完成:读完全部(查询无更多行)→ eof
+    - 时间语义:表内 ts 为绝对时间戳;Frame.ts 相对(ts - t0)
+    """
+
+    def __init__(self, db_path, t0: float | None = None, is_building=None):
+        self._db = Path(db_path)
+        self._is_building = is_building or (lambda: False)
+        self._con = sqlite3.connect(str(self._db))
+        self._con.execute("PRAGMA query_only=ON")
+        # t0 = 文件首帧时间(相对时间基准):自动从表内 MIN(ts) 解析(构建中已写部分)
+        if not t0:
+            row = self._con.execute("SELECT MIN(ts) FROM frames").fetchone()
+            t0 = float(row[0]) if row and row[0] is not None else 0.0
+        self._t0 = float(t0)
+        self._cur_t = 0.0
+        self._eof = False
+        self._batch_rows: list = []   # 当前批缓存(按 ts 有序)
+
+    # ---- FrameSource ----
+
+    def seek(self, t: float) -> None:
+        self._cur_t = t
+        self._eof = False
+        self._batch_rows = []
+
+    def next_batch(self, max_frames: int, end_t: float | None = None) -> list:
+        out: list = []
+        abs_start = self._cur_t + self._t0
+        abs_end = (end_t + self._t0) if end_t is not None else None
+        # 取 [游标, end_t] 区间的帧(ORDER BY ts 保证有序,游标推进)
+        sql = "SELECT ts, channel, frame_id, data, flags FROM frames WHERE ts >= ?"
+        args: list = [abs_start]
+        if abs_end is not None:
+            sql += " AND ts <= ?"
+            args.append(abs_end)
+        sql += " ORDER BY ts LIMIT ?"
+        args.append(max_frames)
+        rows = self._con.execute(sql, args).fetchall()
+        if rows:
+            last_abs = rows[-1][0]
+            for ts, ch, fid, data, flags in rows:
+                out.append(Frame(ts=ts - self._t0, channel=ch, frame_id=fid,
+                                 data=data, is_fd=bool(flags & 1), dlc=len(data) if isinstance(data, bytes) else 8))
+            self._cur_t = last_abs - self._t0
+            if out:
+                self._cur_t = out[-1].ts
+        else:
+            # 无更多行:构建完成且已读完全部 → eof
+            if not self._is_building():
+                self._eof = True
+        return out
+
+    def close(self) -> None:
+        self._con.close()
+
+    @property
+    def eof(self) -> bool:
+        return self._eof
+
+    @property
+    def total_frames(self) -> int:
+        row = self._con.execute("SELECT COUNT(*) FROM frames").fetchone()
+        return int(row[0]) if row else 0
+
+    @property
+    def current_time(self) -> float:
+        return self._cur_t
+
+    @property
+    def time_range(self) -> tuple[float, float]:
+        row = self._con.execute("SELECT MIN(ts), MAX(ts) FROM frames").fetchone()
+        if not row or row[0] is None:
+            return 0.0, 0.0
+        return row[0] - self._t0, row[1] - self._t0
 
 
 class BlfReplaySource(FrameSource):

@@ -126,7 +126,8 @@ def get_decode(name: str, dbc: Optional[str] = None, frame_id: str = "",
 
     key = f"index:{name}"
     # start/end 语义 = 相对秒(对齐前端/播放);索引 ts 是绝对时间戳 → 加日志起始时间转换
-    bundle0 = cache_load(blf_path, build=False)
+    # ⚠️ build=True:等索引就绪(构建中 load_index 内部等待)再取 t0,否则构建中 bundle0=None → t0=0 → 时间窗全错
+    bundle0 = cache_load(blf_path, build=True)
     t0 = (bundle0.stats.get("first_ts") if bundle0 else None) or 0.0
     abs_start = (start + t0) if start is not None else None
     abs_end = (end + t0) if end is not None else None

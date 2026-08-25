@@ -106,9 +106,13 @@ class LiveDictStore:
 
 
 class StoreArchiver:
-    """实时帧归档:增量批量写 SQLite(WAL)。每秒调用 flush() 归档环形缓冲新帧。"""
+    """帧归档到 SQLite(WAL + channel/frame_id/ts 复合索引)。
+    两种模式:
+    - store 模式(实时采集):flush() 从 LiveDictStore 增量归档
+    - 独立模式(静态构建):insert_rows() 直接批量插入(构建线程边扫边写)
+    """
 
-    def __init__(self, store: LiveDictStore, db_path: str | Path):
+    def __init__(self, store: LiveDictStore | None = None, db_path: str | Path = "frames.db"):
         self.store = store
         self.db_path = Path(db_path)
         self.con = sqlite3.connect(str(self.db_path))
@@ -119,10 +123,23 @@ class StoreArchiver:
             "channel INT, frame_id INT, ts REAL, data BLOB, flags INT)")
         self.con.execute(
             "CREATE INDEX IF NOT EXISTS idx_cft ON frames(channel, frame_id, ts)")
-        self._last: dict[tuple, int] = {}   # (ch, fid) -> 已归档行数(增量游标)
+        self._last: dict[tuple, int] = {}   # (ch, fid) -> 已归档行数(store 模式增量游标)
+        self.last_ts: float | None = None    # 已写入最大时间戳(播放源判断可读范围/eof)
+
+    def insert_rows(self, rows: list[tuple]) -> int:
+        """独立模式:直接批量插入(构建线程边扫边写)。rows: (channel, frame_id, ts, data, flags)"""
+        if not rows:
+            return 0
+        self.con.executemany("INSERT INTO frames VALUES(?,?,?,?,?)", rows)
+        self.con.commit()
+        if self.last_ts is None or rows[-1][2] > self.last_ts:
+            self.last_ts = rows[-1][2]
+        return len(rows)
 
     def flush(self) -> int:
         """归档自上次以来的新帧(每秒调用)。返回本次归档帧数。"""
+        if self.store is None:
+            return 0
         rows: list[tuple] = []
         with self.store._lock:
             for ch, msgs in self.store.idx.items():

@@ -101,23 +101,17 @@ async def replay_ws(ws: WebSocket) -> None:
                     if dbc_name and dbc_name not in dbs:
                         dbs[s["channel"]] = load_database(UPLOAD_DIR / dbc_name)
                     subs.append(SignalSub(s["frame_id"], s["channel"], s["signal"], dbc_name))
-                # ⚠️ 源选择:索引构建中且 store 未裁剪(早期数据在)→ LivePlaySource 边扫边播;
-                #            已裁剪(大文件环形上限吃掉早期数据)/未在构建 → BlfReplaySource(完整索引)
+                # ⚠️ 统一 SQLite 数据源:构建线程边扫边写(StoreArchiver),播放读已写入部分。
+                #    构建中 1x 播放完整(0-T 已落盘即可读)、内存恒定(磁盘为主)、无空窗;
+                #    构建完成自动读全量。is_building 决定 eof(构建中数据持续增长)。
+                from app.config import CACHE_DIR
                 from app.services import blf_cache
-                from app.services.frame_source import LivePlaySource
-                if str(blf_path) in blf_cache._building:
-                    fs = blf_cache.live_store.first_ts
-                    earliest = blf_cache.live_store.earliest_ts()
-                    trimmed = earliest is None or (fs is not None and earliest - fs > 1.0)
-                    if trimmed:
-                        print(f"[ws] 构建中但 store 已裁剪(earliest={earliest})→ 等构建完成用完整索引")
-                        src = BlfReplaySource(blf_path)   # load_index 内部等待构建完成
-                    else:
-                        t0 = fs or 0.0
-                        src = LivePlaySource(blf_cache.live_store, t0=t0)
-                        print(f"[ws] 构建中 → LivePlaySource(t0={t0}, store={len(blf_cache.live_store)}帧)")
-                else:
-                    src = BlfReplaySource(blf_path)
+                from app.services.frame_source import SqliteFrameSource
+                db_path = CACHE_DIR / f"{msg['blf']}.db"
+                src = SqliteFrameSource(
+                    db_path, t0=0.0,   # t0 自动从表内 MIN(ts) 解析
+                    is_building=lambda: str(blf_path) in blf_cache._building)
+                print(f"[ws] SqliteFrameSource(db={db_path.name}, 构建中={str(blf_path) in blf_cache._building})")
                 engine = PlaybackEngine(src, dbs, subs)
                 st.update(play_t=0.0, rate=1.0, dur=src.time_range[1],
                           wall_start=time.monotonic())   # ⚠️ wall_start 必须初始化,否则 play 时算出巨大播放时间

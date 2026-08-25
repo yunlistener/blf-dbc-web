@@ -16,13 +16,13 @@ from typing import Optional
 import can
 import numpy as np
 
-from app.config import CACHE_DIR
-from app.services.live_store import LiveDictStore
+from app.config import CACHE_DIR, MAX_TOTAL_FRAMES
+from app.services.live_store import LiveDictStore, StoreArchiver
 
 # 全局环形缓冲:静态构建/实时采集共用,播放源(边缓存边播放)消费
 # ⚠️ 构建期窗口=全量(1e9):播放从 0 跟随构建进度,60s 环形会裁掉早期数据;
 #    帧数上限 5 万/报文(101MB 45 报文 ≈ 315MB 内存,预算内);实时接入时再调环形参数
-live_store = LiveDictStore(window_s=1e9, max_frames_per_msg=50000)
+live_store = LiveDictStore(window_s=1e9, max_frames_per_msg=50000, max_total=MAX_TOTAL_FRAMES)
 
 MAX_FRAMES = 4_000_000        # 内存常驻总帧数上限(紧凑结构 ~30B/帧 → 4M 帧约 120MB)
 CACHE_VERSION = 2
@@ -229,14 +229,26 @@ def build_async(path: Path) -> bool:
     set_progress(key, "后台构建索引(首次加载,大文件较慢)", 0.0)
 
     def _work():
-        with BUILD_LOCK:   # ⚠️ 串行构建:防多文件构建线程并发喂 live_store(数据混合/时间污染)
+        with BUILD_LOCK:   # ⚠️ 串行构建:防多文件构建线程并发写 SQLite/live_store
             try:
+                # 边扫边写 SQLite(磁盘数据源):播放读"已写入部分",内存恒定
+                archiver = StoreArchiver(None, CACHE_DIR / f"{path.name}.db")
+                rows_buf: list = []
+
+                def _on_frame(ts, ch, fid, data, is_fd, dlc):
+                    rows_buf.append((ch, fid, ts, data, int(is_fd)))
+                    if len(rows_buf) >= 1000:
+                        archiver.insert_rows(rows_buf)
+                        rows_buf.clear()
+
                 # 直接构建 + 落盘(不走 load_index:其"构建中等待"逻辑会等自己 → 死锁)
-                live_store.clear()   # 单文件分析:新构建前清空环形缓冲
                 bundle = build_index(
                     path,
                     progress_cb=lambda p: set_progress(key, "后台构建索引(首次加载,大文件较慢)", p),
-                    on_frame=lambda ts, ch, fid, data, is_fd, dlc: live_store.append(ts, ch, fid, data, is_fd, dlc))
+                    on_frame=_on_frame)
+                if rows_buf:
+                    archiver.insert_rows(rows_buf)
+                archiver.close()
                 save_disk(bundle, path)
                 with _lock:
                     _mem[str(path)] = bundle

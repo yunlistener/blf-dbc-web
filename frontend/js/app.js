@@ -640,6 +640,29 @@ function applyXRange(range, src) {
   scheduleLazyLoad();   // 停止后缩放 → 按需懒加载未解码窗口
 }
 
+/* ---------- 全部显示:索引就绪后静态全量渲染(不播放) ---------- */
+async function showAllData() {
+  if (!state.stats) { showTip("⏳ 索引未就绪,请等待构建完成后再试"); return; }
+  const dur = state.stats.duration_s || 0;
+  if (!dur) { showTip("无数据"); return; }
+  showTip("加载全部数据…(索引就绪,秒级)");
+  let ok = 0;
+  for (const s of state.signals) {
+    try {
+      const q = `dbc=${encodeURIComponent(s.dbc || "")}&frame_id=${s.frame_id}&signal=${encodeURIComponent(s.signal)}&channel=${s.channel}&start=0&end=${dur}`;
+      const d = await api(`/api/blf/${encodeURIComponent(state.blf)}/decode?${q}`);
+      s.winData = { times: d.times || [], values: d.values || [] };
+      ok++;
+    } catch (e) {
+      showTip(`加载 ${s.signal} 失败: ${e.message}`);
+    }
+  }
+  if (ok) {
+    draw();
+    showTip(`已显示全部数据(${ok} 个信号,静态查看;点播放切换动态)`);
+  }
+}
+
 /* ---------- 批次3:缩放懒加载 ---------- */
 /* 停止后缩放:窗口超出已解码范围 → 按需 decode 该窗口(相对秒),替换显示 */
 let lazyTimer = null;
@@ -1855,8 +1878,9 @@ function sendReplay(msg) {
 /* 重置播放累积(清空曲线数据) */
 /* 播放结束后恢复静态全量数据(播放数据只是临时覆盖,防止残留稀疏数据) */
 function restoreStaticData() {
-  // 批次3:停止/结束后保留播放数据(曲线停在播放位置),不恢复全量;清窗口懒加载
-  state.signals.forEach(s => { s.winData = null; });
+  // 批次3+:停止/结束后保留播放数据(曲线停在播放位置);
+  // 不主动清 winData —— "全部显示"的静态全量在停止后保持,重新播放时覆盖为动态
+  state.signals.forEach(s => { /* winData 保留 */ });
 }
 
 function resetPlayData() {
