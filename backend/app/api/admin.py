@@ -32,6 +32,7 @@ def clear_cache():
     with blf_cache._lock:
         blf_cache._mem.clear()
         blf_cache._building.clear()
+    blf_cache.live_store.clear()   # ⚠️ 内存环形缓冲也清(旧文件帧残留会污染相对时间/混合数据)
     n = 0
     if CACHE_DIR.is_dir():
         for f in CACHE_DIR.glob("*.idx"):

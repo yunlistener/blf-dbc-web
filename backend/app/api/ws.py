@@ -45,7 +45,8 @@ async def _pump(ws: WebSocket, engine: PlaybackEngine, st: dict) -> None:
             except Exception:
                 pass
             return
-        play_t = _current_play_t(st)
+        play_t = st["play_t"] + (time.monotonic() - st["wall_start"]) * st["rate"]
+        st["wall_start"] = time.monotonic()   # ⚠️ 每批刷新:play_t 纯墙钟驱动,不被数据 t1 污染
         try:
             batch = engine.advance_to(play_t, BATCH_MAX)
         except Exception as e:
@@ -61,7 +62,7 @@ async def _pump(ws: WebSocket, engine: PlaybackEngine, st: dict) -> None:
             except Exception as e:
                 print(f"[ws] send end error: {e}")
             return
-        st["play_t"] = batch["t1"]
+        st["play_t"] = play_t   # 播放时间基准(墙钟),非数据 t1
         try:
             await ws.send_json(batch)
             await ws.send_json({"type": "progress", "t": batch["t1"]})
@@ -100,7 +101,16 @@ async def replay_ws(ws: WebSocket) -> None:
                     if dbc_name and dbc_name not in dbs:
                         dbs[s["channel"]] = load_database(UPLOAD_DIR / dbc_name)
                     subs.append(SignalSub(s["frame_id"], s["channel"], s["signal"], dbc_name))
-                src = BlfReplaySource(blf_path)
+                # ⚠️ 源选择:索引构建中 → LivePlaySource(全局环形缓冲,边扫边播,不等全扫);
+                #            已就绪 → BlfReplaySource(完整索引,seek 快)
+                from app.services import blf_cache
+                from app.services.frame_source import LivePlaySource
+                if str(blf_path) in blf_cache._building:
+                    t0 = blf_cache.live_store.first_ts or 0.0
+                    src = LivePlaySource(blf_cache.live_store, t0=t0)
+                    print(f"[ws] 构建中 → LivePlaySource(t0={t0}, store={len(blf_cache.live_store)}帧)")
+                else:
+                    src = BlfReplaySource(blf_path)
                 engine = PlaybackEngine(src, dbs, subs)
                 st.update(play_t=0.0, rate=1.0, dur=src.time_range[1],
                           wall_start=time.monotonic())   # ⚠️ wall_start 必须初始化,否则 play 时算出巨大播放时间
@@ -110,7 +120,7 @@ async def replay_ws(ws: WebSocket) -> None:
             elif mtype == "play" and engine is not None:
                 print(f"[ws] play: rate={msg.get('rate')}")
                 st["rate"] = float(msg.get("rate", 1.0))
-                st["play_t"] = _current_play_t(st)
+                # play_t 保持(config 时为 0 / 暂停后续播);wall_start 从现在起
                 st["wall_start"] = time.monotonic()
                 st["playing"] = True
                 if pump_task is None or pump_task.done():

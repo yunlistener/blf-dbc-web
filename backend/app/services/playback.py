@@ -59,8 +59,9 @@ class PlaybackEngine:
         """
         frames = self.source.next_batch(max_frames, end_t=play_time)
         if not frames:
-            # 空窗(该时段无订阅信号帧,如信号丢失期):源已到末尾才结束,否则跳过继续
-            if play_time >= self.source.time_range[1] - 1e-6:
+            # 空窗(该时段无订阅信号帧,如信号丢失期/动态源等待数据):
+            # 静态源已到末尾(eof)才结束;动态源(实时/边缓存边播)永不到末尾,跳过继续
+            if self.source.eof:
                 self._ended = True
                 return None
             self._seq += 1

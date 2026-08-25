@@ -17,11 +17,18 @@ import can
 import numpy as np
 
 from app.config import CACHE_DIR
+from app.services.live_store import LiveDictStore
+
+# 全局环形缓冲:静态构建/实时采集共用,播放源(边缓存边播放)消费
+# ⚠️ 构建期窗口=全量(1e9):播放从 0 跟随构建进度,60s 环形会裁掉早期数据;
+#    帧数上限 5 万/报文(101MB 45 报文 ≈ 315MB 内存,预算内);实时接入时再调环形参数
+live_store = LiveDictStore(window_s=1e9, max_frames_per_msg=50000)
 
 MAX_FRAMES = 4_000_000        # 内存常驻总帧数上限(紧凑结构 ~30B/帧 → 4M 帧约 120MB)
 CACHE_VERSION = 2
 
 _lock = threading.Lock()
+BUILD_LOCK = threading.Lock()            # 构建串行化:同一时间一个构建线程喂 live_store(防多文件混合)
 _mem: dict[str, "IndexBundle"] = {}        # path -> 内存索引(进程内复用)
 _building: set[str] = set()                # 正在后台构建的 path(防重复)
 
@@ -62,7 +69,7 @@ def _cache_file(path: Path) -> Path:
     return CACHE_DIR / f"{path.stem}.idx"
 
 
-def build_index(path: Path, progress_cb=None) -> IndexBundle:
+def build_index(path: Path, progress_cb=None, on_frame=None) -> IndexBundle:
     """一次全扫 BLF:统计 + 两级索引(通道→报文→有序帧),紧凑结构。"""
     total_size = path.stat().st_size or 1
     by_ch: dict[int, dict[int, list]] = defaultdict(lambda: defaultdict(list))
@@ -92,6 +99,8 @@ def build_index(path: Path, progress_cb=None) -> IndexBundle:
         stats["by_id"][m.arbitration_id] += 1
         stats["channels"].add(ch)
         by_ch[ch][m.arbitration_id].append((ts, m.data, is_fd, is_rem, m.dlc))
+        if on_frame is not None:   # 边扫边播:喂全局环形缓冲(构建线程)
+            on_frame(ts, ch, m.arbitration_id, m.data, is_fd, m.dlc)
         if progress_cb and fobj is not None:
             try:
                 progress_cb(min(0.99, fobj.tell() / total_size))
@@ -220,15 +229,20 @@ def build_async(path: Path) -> bool:
     set_progress(key, "后台构建索引(首次加载,大文件较慢)", 0.0)
 
     def _work():
-        try:
-            # 直接构建 + 落盘(不走 load_index:其"构建中等待"逻辑会等自己 → 死锁)
-            bundle = build_index(path, progress_cb=lambda p: set_progress(key, "后台构建索引(首次加载,大文件较慢)", p))
-            save_disk(bundle, path)
-            with _lock:
-                _mem[str(path)] = bundle
-        finally:
-            clear_progress(key)
-            finish_build(path)
+        with BUILD_LOCK:   # ⚠️ 串行构建:防多文件构建线程并发喂 live_store(数据混合/时间污染)
+            try:
+                # 直接构建 + 落盘(不走 load_index:其"构建中等待"逻辑会等自己 → 死锁)
+                live_store.clear()   # 单文件分析:新构建前清空环形缓冲
+                bundle = build_index(
+                    path,
+                    progress_cb=lambda p: set_progress(key, "后台构建索引(首次加载,大文件较慢)", p),
+                    on_frame=lambda ts, ch, fid, data, is_fd, dlc: live_store.append(ts, ch, fid, data, is_fd, dlc))
+                save_disk(bundle, path)
+                with _lock:
+                    _mem[str(path)] = bundle
+            finally:
+                clear_progress(key)
+                finish_build(path)
 
     threading.Thread(target=_work, daemon=True).start()
     return True

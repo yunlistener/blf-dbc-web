@@ -5,6 +5,7 @@ FrameSource 是播放管线的数据源层 —— 离线 BLF 回放器与后期�
 """
 from __future__ import annotations
 
+import bisect
 import heapq
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -45,6 +46,124 @@ class FrameSource(ABC):
     @abstractmethod
     def time_range(self) -> tuple[float, float]:
         """数据时间范围(相对秒):(首帧, 末帧)。空窗判断依据。"""
+
+    @property
+    def eof(self) -> bool:
+        """数据是否已到末尾(静态文件读完)。动态源(实时/边缓存边播)永远 False。
+        播放引擎据此区分"真播完"与"暂时无数据(空窗/等待下一批)"。"""
+        return True
+
+
+class LivePlaySource(FrameSource):
+    """边缓存边播放:游标跟随 LiveDictStore,新 append 的帧自动被消费。
+    - 实时 CAN:采集回调 append → 播放实时跟随(播到"当前已接收")
+    - 静态全扫构建期:构建线程逐帧 append → 播放从 0 边扫边播(不用等全扫完成)
+    与 BlfReplaySource(完整索引)互补:索引未就绪用 LivePlaySource,就绪后切回索引。"""
+
+    def __init__(self, store, t0: float = 0.0):
+        self._store = store
+        self._t0 = t0
+        self._pos: dict[tuple, int] = {}   # (ch, fid) -> 已消费行数
+        self._in_heap: set[tuple] = set()  # (ch, fid) 当前在堆中(避免重复入堆)
+        self._cur_t = 0.0
+        self._heap: list[tuple] = []
+        self.seek(0.0)
+
+    def seek(self, t: float) -> None:
+        self._pos = {}
+        self._heap = []
+        self._in_heap = set()
+        self._cur_t = t
+        abs_t = t + self._t0
+        with self._store._lock:
+            for ch, msgs in self._store.idx.items():
+                for fid, rows in msgs.items():
+                    j = bisect.bisect_left(rows, (abs_t,))
+                    if j < len(rows):
+                        self._pos[(ch, fid)] = j
+        # 重建堆
+        for (ch, fid), j in self._pos.items():
+            with self._store._lock:
+                rows = self._store.idx.get(ch, {}).get(fid, [])
+            if j < len(rows):
+                heapq.heappush(self._heap, (rows[j][0], ch, fid, j))
+                self._in_heap.add((ch, fid))
+
+    def _sync_t0(self) -> None:
+        """动态同步相对时间基准:构建/实时首帧到达后 store.first_ts 才确定,
+        config 时可能还是 None → t0 固定为 0 会导致相对/绝对时间错乱。"""
+        if self._store.first_ts is not None:
+            self._t0 = self._store.first_ts
+
+    def _discover(self) -> None:
+        """动态发现可消费帧:新 (ch,fid) 或已有游标有新帧(append 后 heap 空)→ 入堆。"""
+        self._sync_t0()
+        with self._store._lock:
+            for ch, msgs in list(self._store.idx.items()):
+                for fid, rows in msgs.items():
+                    key = (ch, fid)
+                    j = self._pos.get(key)
+                    if j is None:
+                        j = bisect.bisect_left(rows, (self._cur_t + self._t0,))
+                        if j >= len(rows):
+                            continue
+                        self._pos[key] = j
+                    if key not in self._in_heap and j < len(rows):
+                        heapq.heappush(self._heap, (rows[j][0], ch, fid, j))
+                        self._in_heap.add(key)
+
+    def next_batch(self, max_frames: int, end_t: float | None = None) -> list:
+        self._discover()   # ⚠️ 每次取批前发现新帧(构建/实时持续 append)
+        out: list = []
+        guard = 0
+        while self._heap and len(out) < max_frames:
+            ts, ch, fid, j = self._heap[0]
+            if end_t is not None and ts > end_t + self._t0:   # end_t 相对 → 绝对比较
+                break
+            heapq.heappop(self._heap)
+            self._in_heap.discard((ch, fid))
+            with self._store._lock:
+                rows = self._store.idx.get(ch, {}).get(fid, [])
+            if j >= len(rows):          # 被环形裁剪挤掉 → 跳过
+                continue
+            r = rows[j]
+            out.append(Frame(ts=r[0] - self._t0, channel=ch, frame_id=fid,
+                             data=r[1], is_fd=r[2], dlc=r[3]))
+            self._pos[(ch, fid)] = j + 1
+            j += 1
+            if j < len(rows):
+                heapq.heappush(self._heap, (rows[j][0], ch, fid, j))
+                self._in_heap.add((ch, fid))
+            guard += 1
+            if guard > 100000:
+                break
+        if out:
+            self._cur_t = out[-1].ts
+        return out
+
+    def close(self) -> None:
+        self._heap = []
+
+    @property
+    def eof(self) -> bool:
+        return False   # 动态源(实时/边缓存边播):数据持续增长,没有终点
+
+    @property
+    def total_frames(self) -> int:
+        return len(self._store)
+
+    @property
+    def current_time(self) -> float:
+        return self._cur_t
+
+    @property
+    def time_range(self) -> tuple[float, float]:
+        with self._store._lock:
+            if not self._store.idx:
+                return 0.0, 0.0
+            lo = min(rows[0][0] for m in self._store.idx.values() for rows in m.values())
+            hi = max(rows[-1][0] for m in self._store.idx.values() for rows in m.values())
+        return lo - self._t0, hi - self._t0
 
 
 class BlfReplaySource(FrameSource):
@@ -106,6 +225,10 @@ class BlfReplaySource(FrameSource):
 
     def close(self) -> None:
         self._heap = []
+
+    @property
+    def eof(self) -> bool:
+        return not self._heap   # 静态:堆空 = 全部帧已消费 = 播完
 
     # ---- 扩展 ----
 
