@@ -23,6 +23,26 @@ def get_progress():
     return {"progress": snapshot()}
 
 
+@router.post("/clear-cache")
+def clear_cache():
+    """清空 BLF 索引磁盘缓存 + 内存缓存(测试/重新构建用)。返回删除数量。"""
+    from app.config import CACHE_DIR
+    from app.services import blf_cache
+
+    with blf_cache._lock:
+        blf_cache._mem.clear()
+        blf_cache._building.clear()
+    n = 0
+    if CACHE_DIR.is_dir():
+        for f in CACHE_DIR.glob("*.idx"):
+            try:
+                f.unlink()
+                n += 1
+            except OSError:
+                pass
+    return {"cleared": n, "cache_dir": str(CACHE_DIR)}
+
+
 @router.post("/restart")
 def restart_server():
     """重启 uvicorn 进程(Windows/Linux 通用):延时 1s 启动新进程替换自己。

@@ -1403,6 +1403,19 @@ async function toggleSignal(msg, signal, item, channel) {
 
 /* ---------- 管理 ---------- */
 /* 强制重启后台服务:POST /api/admin/restart(后端延时换进程)→ 提示 → 自动刷新 */
+/* 清空索引缓存(测试/重新构建):调后端清缓存 + 提示 + 刷新页面 */
+async function clearCache() {
+  if (!confirm("清空全部索引缓存?下次访问将重新构建(大文件较慢,有进度提示)")) return;
+  try {
+    const d = await api("/api/admin/clear-cache", { method: "POST" });
+    showTip(`已清空 ${d.cleared} 个缓存文件,刷新后重新构建`);
+  } catch (e) {
+    showTip(`清空失败: ${e.message}`);
+    return;
+  }
+  setTimeout(() => location.reload(), 1200);
+}
+
 async function restartBackend() {
   if (!confirm("确定重启后台服务?\n页面将短暂断开,已上传的文件保留。")) return;
   showTip("正在重启后台…");

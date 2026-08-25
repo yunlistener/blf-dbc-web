@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import pickle
 import threading
+import time
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -160,9 +161,18 @@ def _load_disk(path: Path) -> Optional[IndexBundle]:
 
 
 def load_index(path: Path, progress_cb=None, build: bool = True) -> Optional[IndexBundle]:
-    """取索引:内存缓存 → 磁盘缓存 → 全扫构建。无缓存且 build=False 返回 None。"""
+    """取索引:内存缓存 → 磁盘缓存 → 全扫构建。无缓存且 build=False 返回 None。
+
+    若该文件正在后台构建(_building)→ **等待构建完成**(轮询 0.1s),不并发构建:
+    否则播放/解码触发第二次全扫,与后台线程竞争(更慢且写缓存互相覆盖)。"""
     key = str(path)
     sig = _sig(path)
+    # 构建中 → 等待(最多 30 分钟;完成后走内存/磁盘缓存)
+    if build and key in _building:
+        waited = 0.0
+        while key in _building and waited < 1800.0:
+            time.sleep(0.1)
+            waited += 0.1
     with _lock:
         hit = _mem.get(key)
         if hit and hit.sig == sig:
@@ -211,7 +221,11 @@ def build_async(path: Path) -> bool:
 
     def _work():
         try:
-            load_index(path, progress_cb=lambda p: set_progress(key, "后台构建索引(首次加载,大文件较慢)", p))
+            # 直接构建 + 落盘(不走 load_index:其"构建中等待"逻辑会等自己 → 死锁)
+            bundle = build_index(path, progress_cb=lambda p: set_progress(key, "后台构建索引(首次加载,大文件较慢)", p))
+            save_disk(bundle, path)
+            with _lock:
+                _mem[str(path)] = bundle
         finally:
             clear_progress(key)
             finish_build(path)

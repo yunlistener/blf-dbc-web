@@ -171,16 +171,18 @@
     <span id="st-frames">帧数 —</span>
     <span id="st-duration">时长 —</span>
     <span id="st-ids">报文数 —</span>
+    <!-- 后台构建进度(状态栏内嵌,可缩小;不遮挡顶部按钮) -->
+    <span id="busy-toast" class="busy-toast" style="display:none" title="索引后台构建中,可继续操作">
+      <span id="busy-toast-text">⏳ 构建…</span>
+      <span class="busy-toast-track"><span id="busy-toast-bar" style="width:0%"></span></span>
+    </span>
     <span class="spacer"></span>
+    <button id="btn-clear-cache" class="btn btn-mini" onclick="clearCache()" title="清空索引缓存(下次访问重新构建)">清空 cache</button>
     <span id="st-tip">点击左侧信号查看曲线(可多选叠加)· 拖拽框选缩放 · 滚轮缩放</span>
   </div>
 
   <!-- 上传模态 -->
-  <!-- 后台构建进度:顶部细提示条(不遮挡页面,可继续操作) -->
-  <div id="busy-toast" class="busy-toast" style="display:none">
-    <div id="busy-toast-bar" class="busy-toast-bar" style="width:0%"></div>
-    <span id="busy-toast-text">⏳ 后台构建…</span>
-  </div>
+
 
   <div id="upload-modal" class="modal" style="display:none">
     <div class="modal-box">
@@ -213,6 +215,6 @@
   </div>
 
 <script src="vendor/chart.js"></script>
-<script src="js/app.js?v=120"></script>
+<script src="js/app.js?v=121"></script>
 </body>
 </html>
