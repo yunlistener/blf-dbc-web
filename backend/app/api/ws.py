@@ -101,13 +101,18 @@ async def replay_ws(ws: WebSocket) -> None:
                     if dbc_name and dbc_name not in dbs:
                         dbs[s["channel"]] = load_database(UPLOAD_DIR / dbc_name)
                     subs.append(SignalSub(s["frame_id"], s["channel"], s["signal"], dbc_name))
-                # ⚠️ 2026-08-27 构建提速后:播放源用 BlfReplaySource(完整索引)。
-                #    索引未就绪 → load_index 内部等待构建完成(构建中前端已置灰播放按钮,
-                #    进度弹窗提示);构建完成 → 秒级就绪、seek 可用。
+                # ⚠️ 源选择(2026-08-27 共享内存边扫边播):
+                #   构建中 → MemPlaySource(共享内存缓冲,~5μs/批,不卡顿)
+                #   已就绪 → BlfReplaySource(完整索引,seek/全部显示正常)
                 from app.services import blf_cache
-                from app.services.frame_source import BlfReplaySource
-                src = BlfReplaySource(blf_path)
-                print(f"[ws] BlfReplaySource(索引就绪)")
+                if str(blf_path) in blf_cache._building:
+                    from app.services.frame_source import MemPlaySource
+                    src = MemPlaySource(blf_cache.mem_buffer)
+                    print("[ws] MemPlaySource(构建中,共享内存边扫边播)")
+                else:
+                    from app.services.frame_source import BlfReplaySource
+                    src = BlfReplaySource(blf_path)
+                    print("[ws] BlfReplaySource(索引就绪)")
                 engine = PlaybackEngine(src, dbs, subs)
                 st.update(play_t=0.0, rate=1.0, dur=src.time_range[1],
                           wall_start=time.monotonic())   # ⚠️ wall_start 必须初始化,否则 play 时算出巨大播放时间

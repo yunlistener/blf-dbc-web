@@ -18,11 +18,17 @@ import numpy as np
 
 from app.config import CACHE_DIR, MAX_TOTAL_FRAMES
 from app.services.live_store import LiveDictStore, StoreArchiver
+from app.services.frame_source import MemFrameBuffer
 
 # 全局环形缓冲:静态构建/实时采集共用,播放源(边缓存边播放)消费
 # ⚠️ 构建期窗口=全量(1e9):播放从 0 跟随构建进度,60s 环形会裁掉早期数据;
 #    帧数上限 5 万/报文(101MB 45 报文 ≈ 315MB 内存,预算内);实时接入时再调环形参数
 live_store = LiveDictStore(window_s=1e9, max_frames_per_msg=50000, max_total=MAX_TOTAL_FRAMES)
+
+# ⚠️ 共享内存帧缓冲(边扫边播,2026-08-27):构建线程 append(顺序=时间),
+#    构建中播放 = MemPlaySource 内存切片读(~5μs/批,无锁竞争,不卡顿)。
+#    3843 万帧 ~1.5GB(树莓派 8GB 可接受);构建完成落 pickle 后缓冲可清
+mem_buffer = MemFrameBuffer()
 
 MAX_FRAMES = 4_000_000        # 内存常驻总帧数上限(紧凑结构 ~30B/帧 → 4M 帧约 120MB)
 CACHE_VERSION = 2
@@ -110,8 +116,12 @@ def build_index(path: Path, progress_cb=None, on_frame=None) -> IndexBundle:
         e[1].append(m.data)
         e[2].append(m.dlc)
         e[3].append((1 if is_fd else 0) | (2 if is_rem else 0))
-        if on_frame is not None:   # 边扫边播:喂全局环形缓冲(构建线程)
+        if on_frame is not None:   # 边扫边播:喂共享内存缓冲(构建线程)
             on_frame(ts, ch, m.arbitration_id, m.data, is_fd, m.dlc)
+        # ⚠️ GIL 让步:解析是 CPU 密集(纯 Python),会饿死同进程播放线程;
+        #    每 500 帧 sleep 0.3ms 释放 GIL → 播放 pump 可抢(构建中播放流畅)
+        if stats["total_frames"] % 500 == 0:
+            time.sleep(0.0003)
         if progress_cb and fobj is not None:
             try:
                 progress_cb(min(0.99, fobj.tell() / total_size))
@@ -244,13 +254,18 @@ def build_async(path: Path) -> bool:
     def _work():
         with BUILD_LOCK:   # ⚠️ 串行构建:防多文件构建线程并发
             try:
-                # ⚠️ 2026-08-27 构建提速:不再边扫边写 SQLite(SQLite 写入+建索引+checkpoint
-                #    占构建 ~240s/282MB,且只为"构建中播放"(卡顿,用户已否)→ 砍掉;
-                #    构建 = 纯解析 + 内存索引 + pickle 落盘 → 282MB 324s → ~100s
-                #    SQLite 数据源保留(实时 CAN 输入后续接入用,与静态构建无关)
+                # ⚠️ 2026-08-27 共享内存边扫边播:解析时喂全局缓冲(append O(1)),
+                #    构建中播放 = MemPlaySource 内存切片读(~5μs/批,不卡顿);
+                #    构建完成落 pickle(持久化),播放切 BlfReplaySource(seek 可用)
+                mem_buffer.clear()
+
+                def _on_frame(ts, ch, fid, data, is_fd, dlc):
+                    mem_buffer.append(ts, ch, fid, data, is_fd, dlc)
+
                 bundle = build_index(
                     path,
-                    progress_cb=lambda p: set_progress(key, "后台构建索引(首次加载,大文件较慢)", p))
+                    progress_cb=lambda p: set_progress(key, "后台构建索引(首次加载,大文件较慢)", p),
+                    on_frame=_on_frame)
                 save_disk(bundle, path)
                 with _lock:
                     _mem[str(path)] = bundle

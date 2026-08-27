@@ -2090,15 +2090,10 @@ async function pollBusyProgress() {
 }
 setInterval(pollBusyProgress, 500);
 
-/* ⚠️ 构建中置灰:播放/暂停/停止/seek/全部显示 不可用(索引未就绪) */
+/* ⚠️ 构建中置灰:全部显示需要完整索引 → 置灰;播放可用(共享内存边扫边播) */
 function setControlsDisabled(disabled) {
-  const ids = ["btn-play", "btn-pause", "btn-stop", "btn-seek", "btn-show-all"];
-  ids.forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.disabled = !!disabled;
-  });
-  const hint = document.getElementById("play-hint");
-  if (hint && disabled) hint.textContent = "⏳ 索引构建中,完成后可播放";
+  const el = document.getElementById("btn-show-all");
+  if (el) el.disabled = !!disabled;
 }
 
 init().catch(e => {

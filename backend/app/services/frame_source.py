@@ -8,13 +8,15 @@ from __future__ import annotations
 import bisect
 import heapq
 import sqlite3
+import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
-from app.services.blf_cache import FrameChunk, load_index
+# ⚠️ 不 import blf_cache(循环:blf_cache → frame_source → blf_cache);
+#   FrameChunk 仅类型注解,用 string 注解/注释表述
 
 
 @dataclass
@@ -167,6 +169,100 @@ class LivePlaySource(FrameSource):
         return lo - self._t0, hi - self._t0
 
 
+class MemFrameBuffer:
+    """共享内存帧缓冲(同进程):构建线程 append,播放线程游标切片读。
+    ⚠️ 比 redis/SQLite 边扫边播更优:同进程无需网络/文件 IPC,
+    播放读取 ~5μs(内存切片),构建不额外慢(append O(1))。
+    内存:每帧 ~40B(6 元组)→ 3843 万帧 ~1.5GB(树莓派 8GB 可接受)。"""
+
+    def __init__(self):
+        self._frames: list = []
+        self._lock = threading.Lock()
+        self.first_ts: float | None = None
+        self.last_ts: float | None = None
+
+    def append(self, ts: float, ch: int, fid: int, data: bytes, is_fd: bool, dlc: int) -> None:
+        with self._lock:
+            if self.first_ts is None:
+                self.first_ts = ts
+            self.last_ts = ts
+            self._frames.append((ts, ch, fid, data, int(is_fd), dlc))
+
+    def read(self, pos: int, n: int) -> tuple[list, int]:
+        """从 pos 读最多 n 帧,返回 (帧列表, 新游标位置)。"""
+        with self._lock:
+            end = min(pos + n, len(self._frames))
+            return self._frames[pos:end], end
+
+    def clear(self) -> None:
+        with self._lock:
+            self._frames.clear()
+            self.first_ts = None
+            self.last_ts = None
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._frames)
+
+
+class MemPlaySource(FrameSource):
+    """构建中播放源:从共享内存缓冲游标顺序读(同进程,内存切片 ~5μs/批)。
+    - end_t 过滤:每批只取"播放时间窗"内的帧(防 x 轴堆积成直线)
+    - eof 恒 False:构建中数据持续增长
+    - seek:构建中从 0(简化;构建完成后切 BlfReplaySource 支持 seek)
+    """
+
+    def __init__(self, buf: MemFrameBuffer, t0: float | None = None):
+        self._buf = buf
+        self._t0 = float(t0) if t0 else float(buf.first_ts or 0.0)
+        self._pos = 0
+        self._cur_t = 0.0
+        self._eof = False
+
+    # ---- FrameSource ----
+
+    def seek(self, t: float) -> None:
+        self._pos = 0       # 构建中:从头顺序播
+        self._cur_t = t
+        self._eof = False
+
+    def next_batch(self, max_frames: int, end_t: float | None = None) -> list:
+        out: list = []
+        frames, new_pos = self._buf.read(self._pos, max_frames)
+        consumed = 0
+        for ts, ch, fid, data, is_fd, dlc in frames:
+            rel = ts - self._t0
+            if end_t is not None and rel > end_t:
+                break   # 超播放时间的帧留给下批
+            out.append(Frame(ts=rel, channel=ch, frame_id=fid,
+                             data=data, is_fd=bool(is_fd), dlc=dlc))
+            consumed += 1
+        self._pos += consumed
+        if out:
+            self._cur_t = out[-1].ts
+        return out
+
+    def close(self) -> None:
+        pass
+
+    @property
+    def eof(self) -> bool:
+        return False   # 构建中:数据持续增长
+
+    @property
+    def total_frames(self) -> int:
+        return len(self._buf)
+
+    @property
+    def current_time(self) -> float:
+        return self._cur_t
+
+    @property
+    def time_range(self) -> tuple[float, float]:
+        hi = (self._buf.last_ts - self._t0) if self._buf.last_ts is not None else 0.0
+        return 0.0, hi
+
+
 class SqliteFrameSource(FrameSource):
     """从 SQLite 读帧(磁盘数据源):构建线程边扫边写(StoreArchiver.insert_rows),
     播放读"已写入部分" → 构建中 1x 播放完整(0-T 已落盘即可读),内存恒定(磁盘为主)。
@@ -279,6 +375,8 @@ class BlfReplaySource(FrameSource):
     searchsorted 二分,流式输出用最小堆 k-way merge。"""
 
     def __init__(self, path: Path | str):
+        # ⚠️ 延迟 import 防循环(blf_cache ↔ frame_source)
+        from app.services.blf_cache import load_index
         self.path = Path(path)
         bundle = load_index(self.path)          # 内存/磁盘缓存,不会全扫
         if bundle is None:
@@ -286,7 +384,7 @@ class BlfReplaySource(FrameSource):
         self._index = bundle.index              # {ch: {fid: FrameChunk}}
         self._t0 = bundle.stats.get("first_ts") or 0.0
         # 扁平化:每 (ch, fid) 一个数据项
-        self._chunks: list[tuple[int, int, FrameChunk]] = []
+        self._chunks: list = []   # [(ch, fid, FrameChunk)]
         for ch in sorted(self._index):
             for fid in sorted(self._index[ch]):
                 self._chunks.append((ch, fid, self._index[ch][fid]))
