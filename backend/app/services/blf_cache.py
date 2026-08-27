@@ -72,7 +72,9 @@ def _cache_file(path: Path) -> Path:
 def build_index(path: Path, progress_cb=None, on_frame=None) -> IndexBundle:
     """一次全扫 BLF:统计 + 两级索引(通道→报文→有序帧),紧凑结构。"""
     total_size = path.stat().st_size or 1
-    by_ch: dict[int, dict[int, list]] = defaultdict(lambda: defaultdict(list))
+    # ⚠️ 2026-08-27 向量化:按 (ch,fid) 存"分离 list"(ts/data/dlc/flags),
+    #    避免元组装箱 + 逐帧 np 赋值(3843 万帧 × Python 级 → 树莓派 ~80s)
+    by_ch: dict[int, dict[int, tuple]] = {}
     stats = {
         "total_frames": 0, "fd_frames": 0, "error_frames": 0, "remote_frames": 0,
         "first_ts": None, "last_ts": None,
@@ -98,7 +100,16 @@ def build_index(path: Path, progress_cb=None, on_frame=None) -> IndexBundle:
         stats["last_ts"] = ts
         stats["by_id"][m.arbitration_id] += 1
         stats["channels"].add(ch)
-        by_ch[ch][m.arbitration_id].append((ts, m.data, is_fd, is_rem, m.dlc))
+        msgs = by_ch.get(ch)
+        if msgs is None:
+            msgs = by_ch[ch] = {}
+        e = msgs.get(m.arbitration_id)
+        if e is None:
+            e = msgs[m.arbitration_id] = ([], [], [], [])
+        e[0].append(ts)
+        e[1].append(m.data)
+        e[2].append(m.dlc)
+        e[3].append((1 if is_fd else 0) | (2 if is_rem else 0))
         if on_frame is not None:   # 边扫边播:喂全局环形缓冲(构建线程)
             on_frame(ts, ch, m.arbitration_id, m.data, is_fd, m.dlc)
         if progress_cb and fobj is not None:
@@ -107,29 +118,31 @@ def build_index(path: Path, progress_cb=None, on_frame=None) -> IndexBundle:
             except Exception:
                 pass
 
-    # 转紧凑结构
+    # 转紧凑结构(全向量化:np.array 一次性转换 + cumsum,无逐帧赋值)
     index: dict[int, dict[int, FrameChunk]] = {}
     for ch in by_ch:
         index[ch] = {}
-        for fid, rows in by_ch[ch].items():
-            rows.sort(key=lambda r: r[0])   # 帧按时间递增(双保险)
-            n = len(rows)
-            t0 = rows[0][0]
-            ts = np.empty(n, dtype=np.float32)
-            off = np.empty(n, dtype=np.int32)
-            dlc = np.empty(n, dtype=np.uint8)
-            flags = np.empty(n, dtype=np.uint8)
-            parts = []
-            pos = 0
-            for i, (t, data, is_fd, is_rem, d) in enumerate(rows):
-                ts[i] = t - t0
-                off[i] = pos
-                dlc[i] = d
-                flags[i] = (1 if is_fd else 0) | (2 if is_rem else 0)
-                parts.append(data)
-                pos += len(data)
-            index[ch][fid] = FrameChunk(ts=ts, t0=t0, off=off, dlc=dlc, flags=flags,
-                                        data=b"".join(parts))
+        for fid, (ts_l, data_l, dlc_l, flags_l) in by_ch[ch].items():
+            n = len(ts_l)
+            ts0 = ts_l[0]
+            # ⚠️ 必须 float64 过渡:绝对时间戳 1.7e9 直接转 float32 精度仅 ~128s → ts 错乱;
+            #    先减后转(差值 ~1792s,float32 精确到 ~0.1ms)
+            ts = (np.array(ts_l, dtype=np.float64) - ts0).astype(np.float32)
+            if n > 1 and not bool((ts[1:] >= ts[:-1]).all()):
+                # 乱序(罕见,双保险):按时间重排(文件顺序几乎总有序,此分支几乎不触发)
+                order = np.argsort(ts)
+                ts = ts[order]
+                data_l = [data_l[i] for i in order]
+                dlc_l = [dlc_l[i] for i in order]
+                flags_l = [flags_l[i] for i in order]
+            lens = np.fromiter((len(d) for d in data_l), dtype=np.int64, count=n)
+            off = np.zeros(n, dtype=np.int32)
+            if n > 1:
+                off[1:] = np.cumsum(lens[:-1])
+            index[ch][fid] = FrameChunk(ts=ts, t0=ts0, off=off,
+                                        dlc=np.array(dlc_l, dtype=np.uint8),
+                                        flags=np.array(flags_l, dtype=np.uint8),
+                                        data=b"".join(data_l))
 
     stats["channels"] = sorted(stats["channels"])
     stats["by_id"] = dict(stats["by_id"])
