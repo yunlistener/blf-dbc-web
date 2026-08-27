@@ -248,6 +248,7 @@ def build_async(path: Path) -> bool:
                     on_frame=_on_frame)
                 if rows_buf:
                     archiver.insert_rows(rows_buf)
+                archiver.checkpoint()   # ⚠️ WAL → 主库(构建期间禁了自动 checkpoint)
                 archiver.close()
                 save_disk(bundle, path)
                 with _lock:

@@ -118,6 +118,10 @@ class StoreArchiver:
         self.con = sqlite3.connect(str(self.db_path))
         self.con.execute("PRAGMA journal_mode=WAL")
         self.con.execute("PRAGMA synchronous=NORMAL")
+        # ⚠️ 禁自动 checkpoint:SD 卡(树莓派)上 WAL 自动 checkpoint 是随机页写,
+        #    大库构建时每批 commit 被拖到 ~400ms(实测构建 42 分钟 vs 应 ~50s);
+        #    改为构建期间纯 WAL 追加(顺序写快),完成时手动 checkpoint 一次
+        self.con.execute("PRAGMA wal_autocheckpoint=0")
         self.con.execute(
             "CREATE TABLE IF NOT EXISTS frames("
             "channel INT, frame_id INT, ts REAL, data BLOB, flags INT)")
@@ -128,6 +132,13 @@ class StoreArchiver:
         self.con.execute("CREATE INDEX IF NOT EXISTS idx_ts ON frames(ts)")
         self._last: dict[tuple, int] = {}   # (ch, fid) -> 已归档行数(store 模式增量游标)
         self.last_ts: float | None = None    # 已写入最大时间戳(播放源判断可读范围/eof)
+
+    def checkpoint(self) -> None:
+        """构建完成后手动 checkpoint 一次(WAL → 主库),之后正常读写。"""
+        try:
+            self.con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except sqlite3.OperationalError:
+            pass   # 空 WAL 时可能无操作
 
     def insert_rows(self, rows: list[tuple]) -> int:
         """独立模式:直接批量插入(构建线程边扫边写)。rows: (channel, frame_id, ts, data, flags)"""
