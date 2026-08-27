@@ -101,17 +101,13 @@ async def replay_ws(ws: WebSocket) -> None:
                     if dbc_name and dbc_name not in dbs:
                         dbs[s["channel"]] = load_database(UPLOAD_DIR / dbc_name)
                     subs.append(SignalSub(s["frame_id"], s["channel"], s["signal"], dbc_name))
-                # ⚠️ 统一 SQLite 数据源:构建线程边扫边写(StoreArchiver),播放读已写入部分。
-                #    构建中 1x 播放完整(0-T 已落盘即可读)、内存恒定(磁盘为主)、无空窗;
-                #    构建完成自动读全量。is_building 决定 eof(构建中数据持续增长)。
-                from app.config import CACHE_DIR
+                # ⚠️ 2026-08-27 构建提速后:播放源用 BlfReplaySource(完整索引)。
+                #    索引未就绪 → load_index 内部等待构建完成(构建中前端已置灰播放按钮,
+                #    进度弹窗提示);构建完成 → 秒级就绪、seek 可用。
                 from app.services import blf_cache
-                from app.services.frame_source import SqliteFrameSource
-                db_path = CACHE_DIR / f"{msg['blf']}.db"
-                src = SqliteFrameSource(
-                    db_path, t0=0.0,   # t0 自动从表内 MIN(ts) 解析
-                    is_building=lambda: str(blf_path) in blf_cache._building)
-                print(f"[ws] SqliteFrameSource(db={db_path.name}, 构建中={str(blf_path) in blf_cache._building})")
+                from app.services.frame_source import BlfReplaySource
+                src = BlfReplaySource(blf_path)
+                print(f"[ws] BlfReplaySource(索引就绪)")
                 engine = PlaybackEngine(src, dbs, subs)
                 st.update(play_t=0.0, rate=1.0, dur=src.time_range[1],
                           wall_start=time.monotonic())   # ⚠️ wall_start 必须初始化,否则 play 时算出巨大播放时间

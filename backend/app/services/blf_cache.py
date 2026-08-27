@@ -229,34 +229,21 @@ def build_async(path: Path) -> bool:
     set_progress(key, "后台构建索引(首次加载,大文件较慢)", 0.0)
 
     def _work():
-        with BUILD_LOCK:   # ⚠️ 串行构建:防多文件构建线程并发写 SQLite/live_store
+        with BUILD_LOCK:   # ⚠️ 串行构建:防多文件构建线程并发
             try:
-                # 边扫边写 SQLite(磁盘数据源):播放读"已写入部分",内存恒定
-                archiver = StoreArchiver(None, CACHE_DIR / f"{path.name}.db")
-                rows_buf: list = []
-
-                def _on_frame(ts, ch, fid, data, is_fd, dlc):
-                    rows_buf.append((ch, fid, ts, data, int(is_fd)))
-                    if len(rows_buf) >= 1000:
-                        archiver.insert_rows(rows_buf)
-                        rows_buf.clear()
-
-                # 直接构建 + 落盘(不走 load_index:其"构建中等待"逻辑会等自己 → 死锁)
+                # ⚠️ 2026-08-27 构建提速:不再边扫边写 SQLite(SQLite 写入+建索引+checkpoint
+                #    占构建 ~240s/282MB,且只为"构建中播放"(卡顿,用户已否)→ 砍掉;
+                #    构建 = 纯解析 + 内存索引 + pickle 落盘 → 282MB 324s → ~100s
+                #    SQLite 数据源保留(实时 CAN 输入后续接入用,与静态构建无关)
                 bundle = build_index(
                     path,
-                    progress_cb=lambda p: set_progress(key, "后台构建索引(首次加载,大文件较慢)", p),
-                    on_frame=_on_frame)
-                if rows_buf:
-                    archiver.insert_rows(rows_buf)
-                archiver.build_indexes()   # ⚠️ 完成后一次性建索引(插入时无索引,WAL 不膨胀)
-                archiver.checkpoint()      # ⚠️ WAL → 主库(构建期间禁了自动 checkpoint)
-                archiver.close()
+                    progress_cb=lambda p: set_progress(key, "后台构建索引(首次加载,大文件较慢)", p))
                 save_disk(bundle, path)
                 with _lock:
                     _mem[str(path)] = bundle
             except Exception:
                 import traceback
-                traceback.print_exc()   # ⚠️ 构建线程异常必须打印(曾静默崩溃:播放查询全表扫描致锁冲突)
+                traceback.print_exc()   # ⚠️ 构建线程异常必须打印(曾静默崩溃)
             finally:
                 clear_progress(key)
                 finish_build(path)

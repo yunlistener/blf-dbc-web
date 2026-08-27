@@ -2057,27 +2057,49 @@ function pausePlayOnSignalChange() {
 
 setInterval(updateDiag, 800);   // 诊断条定时刷新
 
-/* 后台构建进度:轮询 /api/admin/progress → 顶部细提示条(不遮挡页面,可继续操作) */
+/* 后台构建进度:轮询 /api/admin/progress → 居中弹窗(遮罩) + 构建中置灰播放/全部显示按钮 */
+let _building = false;
 async function pollBusyProgress() {
   try {
     const r = await fetch("/api/admin/progress");
     const d = await r.json();
     const entries = Object.values(d.progress || {});
+    const overlay = document.getElementById("busy-overlay");
     const bar = document.getElementById("busy-toast");
-    if (!bar) return;
+    const building = entries.length > 0;
+    if (building !== _building) {
+      _building = building;
+      setControlsDisabled(building);   // ⚠️ 构建中置灰播放/全部显示等按钮
+    }
     if (entries.length) {
       const e = entries[0];
       const pct = Math.round((e.progress || 0) * 100);
-      document.getElementById("busy-toast-bar").style.width = pct + "%";
-      document.getElementById("busy-toast-text").textContent =
-        `⏳ ${e.stage || "后台构建"} · ${pct}%`;
-      bar.style.display = "flex";
+      if (overlay) {
+        overlay.style.display = "flex";
+        const t = document.getElementById("busy-overlay-text");
+        if (t) t.textContent = `⏳ ${e.stage || "后台构建索引"} · ${pct}%`;
+        const ovBar = document.getElementById("busy-overlay-bar");
+        if (ovBar) ovBar.style.width = pct + "%";
+      }
+      if (bar) { bar.style.display = "none"; }   // 弹窗替代细条
     } else {
-      bar.style.display = "none";
+      if (overlay) overlay.style.display = "none";
+      if (bar) bar.style.display = "none";
     }
   } catch (err) { /* 后端重启/断连时忽略 */ }
 }
 setInterval(pollBusyProgress, 500);
+
+/* ⚠️ 构建中置灰:播放/暂停/停止/seek/全部显示 不可用(索引未就绪) */
+function setControlsDisabled(disabled) {
+  const ids = ["btn-play", "btn-pause", "btn-stop", "btn-seek", "btn-show-all"];
+  ids.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = !!disabled;
+  });
+  const hint = document.getElementById("play-hint");
+  if (hint && disabled) hint.textContent = "⏳ 索引构建中,完成后可播放";
+}
 
 init().catch(e => {
   document.getElementById("tree-hint").textContent = "加载失败: " + e.message;
