@@ -204,10 +204,18 @@ class SqliteFrameSource(FrameSource):
         if self._is_building():
             # ⚠️ 构建中:rowid 增量游标 —— 插入顺序 = BLF 时间顺序,主键扫描免索引;
             #    WHERE ts 查询在无 idx_ts 时全表扫描(3843 万行 → 单批 10-30s → WS 卡死 1011)
-            rows = self._con.execute(
-                "SELECT rowid, ts, channel, frame_id, data, flags FROM frames "
-                "WHERE rowid > ? ORDER BY rowid LIMIT ?",
-                (self._last_rowid, max_frames)).fetchall()
+            #    ⚠️ 必须加 ts <= end_t 过滤:否则每批取"最近 flush 的 1000 帧"(ts 跨度 ~0.01s),
+            #    x 坐标几乎相同 → 画线在时间轴上堆积成直线(用户反馈红框内异常直线)
+            abs_end = (end_t + self._t0) if end_t is not None else None
+            sql = ("SELECT rowid, ts, channel, frame_id, data, flags FROM frames "
+                   "WHERE rowid > ?")
+            args: list = [self._last_rowid]
+            if abs_end is not None:
+                sql += " AND ts <= ?"
+                args.append(abs_end)
+            sql += " ORDER BY rowid LIMIT ?"
+            args.append(max_frames)
+            rows = self._con.execute(sql, args).fetchall()
             if rows:
                 for rid, ts, ch, fid, data, flags in rows:
                     out.append(Frame(ts=ts - self._t0, channel=ch, frame_id=fid,
