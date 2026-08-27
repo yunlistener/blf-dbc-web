@@ -180,6 +180,7 @@ class MemFrameBuffer:
         self._lock = threading.Lock()
         self.first_ts: float | None = None
         self.last_ts: float | None = None
+        self.closed: bool = False   # 构建完成落盘后置 True:播放源 eof,缓冲可释放
 
     def append(self, ts: float, ch: int, fid: int, data: bytes, is_fd: bool, dlc: int) -> None:
         with self._lock:
@@ -194,11 +195,21 @@ class MemFrameBuffer:
             end = min(pos + n, len(self._frames))
             return self._frames[pos:end], end
 
-    def clear(self) -> None:
+    def reset(self) -> None:
+        """构建开始:清空并重新开放(旧播放源应结束,新构建重新喂数据)。"""
         with self._lock:
             self._frames.clear()
             self.first_ts = None
             self.last_ts = None
+            self.closed = False
+
+    def close(self) -> None:
+        """构建完成落盘:清空并关闭(播放已切 BlfReplaySource,释放全量帧内存)。"""
+        with self._lock:
+            self._frames.clear()
+            self.first_ts = None
+            self.last_ts = None
+            self.closed = True
 
     def __len__(self) -> int:
         with self._lock:
@@ -247,7 +258,7 @@ class MemPlaySource(FrameSource):
 
     @property
     def eof(self) -> bool:
-        return False   # 构建中:数据持续增长
+        return self._buf.closed   # 缓冲关闭(构建完成落盘)→ 播放正常结束,不空转
 
     @property
     def total_frames(self) -> int:

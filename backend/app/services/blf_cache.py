@@ -257,7 +257,7 @@ def build_async(path: Path) -> bool:
                 # ⚠️ 2026-08-27 共享内存边扫边播:解析时喂全局缓冲(append O(1)),
                 #    构建中播放 = MemPlaySource 内存切片读(~5μs/批,不卡顿);
                 #    构建完成落 pickle(持久化),播放切 BlfReplaySource(seek 可用)
-                mem_buffer.clear()
+                mem_buffer.reset()
 
                 def _on_frame(ts, ch, fid, data, is_fd, dlc):
                     mem_buffer.append(ts, ch, fid, data, is_fd, dlc)
@@ -269,6 +269,11 @@ def build_async(path: Path) -> bool:
                 save_disk(bundle, path)
                 with _lock:
                     _mem[str(path)] = bundle
+                # ⚠️ 修复(2026-08-27):构建完成落盘后必须清空共享缓冲——
+                #    残留全量帧占内存(282MB 文件 ≈ 百万帧 ≈ 数百 MB~1.5GB),
+                #    且旧 MemPlaySource 会继续读缓冲;close 后其 eof=True 正常结束,
+                #    新连接走 BlfReplaySource(索引就绪,seek/全部显示可用)
+                mem_buffer.close()
             except Exception:
                 import traceback
                 traceback.print_exc()   # ⚠️ 构建线程异常必须打印(曾静默崩溃)
