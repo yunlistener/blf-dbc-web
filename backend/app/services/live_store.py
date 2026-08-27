@@ -118,20 +118,23 @@ class StoreArchiver:
         self.con = sqlite3.connect(str(self.db_path))
         self.con.execute("PRAGMA journal_mode=WAL")
         self.con.execute("PRAGMA synchronous=NORMAL")
-        # ⚠️ 禁自动 checkpoint:SD 卡(树莓派)上 WAL 自动 checkpoint 是随机页写,
-        #    大库构建时每批 commit 被拖到 ~400ms(实测构建 42 分钟 vs 应 ~50s);
-        #    改为构建期间纯 WAL 追加(顺序写快),完成时手动 checkpoint 一次
+        # ⚠️ 构建期 SQLite 优化(SD 卡):
+        #   - 禁自动 checkpoint(WAL 自动 checkpoint = 随机页写,SD 卡 IOPS 差)→ 完成时手动一次
+        #   - 插入时**不建索引**:索引页进 WAL 会导致 WAL 膨胀到 14GB(实测!)→ 写 14GB 到 SD 卡 6 分钟
+        #   - 改为:插入无索引(WAL 只含数据页 ~600MB 可控),构建完成后 build_indexes() 一次性建
         self.con.execute("PRAGMA wal_autocheckpoint=0")
         self.con.execute(
             "CREATE TABLE IF NOT EXISTS frames("
             "channel INT, frame_id INT, ts REAL, data BLOB, flags INT)")
-        self.con.execute(
-            "CREATE INDEX IF NOT EXISTS idx_cft ON frames(channel, frame_id, ts)")
-        # ⚠️ ts 单列索引:播放源查询无 channel/frame_id 条件(取所有报文帧按时间),
-        # ORDER BY ts + 范围扫描必须走 ts 索引,否则 686 万行全表排序 → 播放慢到爆
-        self.con.execute("CREATE INDEX IF NOT EXISTS idx_ts ON frames(ts)")
         self._last: dict[tuple, int] = {}   # (ch, fid) -> 已归档行数(store 模式增量游标)
         self.last_ts: float | None = None    # 已写入最大时间戳(播放源判断可读范围/eof)
+
+    def build_indexes(self) -> None:
+        """构建完成后一次性建索引(排序写,避免插入时索引页进 WAL 导致膨胀)。"""
+        self.con.execute("CREATE INDEX IF NOT EXISTS idx_cft ON frames(channel, frame_id, ts)")
+        # ts 单列索引:播放源查询无 channel/frame_id 条件(取所有报文帧按时间),
+        # ORDER BY ts + 范围扫描必须走 ts 索引,否则全表排序 → 播放慢到爆
+        self.con.execute("CREATE INDEX IF NOT EXISTS idx_ts ON frames(ts)")
 
     def checkpoint(self) -> None:
         """构建完成后手动 checkpoint 一次(WAL → 主库),之后正常读写。"""
