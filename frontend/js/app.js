@@ -2057,34 +2057,29 @@ function pausePlayOnSignalChange() {
 
 setInterval(updateDiag, 800);   // 诊断条定时刷新
 
-/* 后台构建进度:轮询 /api/admin/progress → 居中弹窗(遮罩) + 构建中置灰播放/全部显示按钮 */
+/* 后台构建进度:轮询 /api/admin/progress → 底部状态栏内嵌(低调,不遮挡) + 构建中置灰"全部显示" */
 let _building = false;
 async function pollBusyProgress() {
   try {
     const r = await fetch("/api/admin/progress");
     const d = await r.json();
     const entries = Object.values(d.progress || {});
-    const overlay = document.getElementById("busy-overlay");
     const bar = document.getElementById("busy-toast");
     const building = entries.length > 0;
     if (building !== _building) {
       _building = building;
-      setControlsDisabled(building);   // ⚠️ 构建中置灰播放/全部显示等按钮
+      setControlsDisabled(building);   // ⚠️ 构建中置灰"全部显示"(需完整索引)
     }
+    if (!bar) return;
     if (entries.length) {
       const e = entries[0];
       const pct = Math.round((e.progress || 0) * 100);
-      if (overlay) {
-        overlay.style.display = "flex";
-        const t = document.getElementById("busy-overlay-text");
-        if (t) t.textContent = `⏳ ${e.stage || "后台构建索引"} · ${pct}%`;
-        const ovBar = document.getElementById("busy-overlay-bar");
-        if (ovBar) ovBar.style.width = pct + "%";
-      }
-      if (bar) { bar.style.display = "none"; }   // 弹窗替代细条
+      document.getElementById("busy-toast-bar").style.width = pct + "%";
+      document.getElementById("busy-toast-text").textContent =
+        `⏳ 索引构建中 · ${pct}%`;
+      bar.style.display = "inline-flex";
     } else {
-      if (overlay) overlay.style.display = "none";
-      if (bar) bar.style.display = "none";
+      bar.style.display = "none";
     }
   } catch (err) { /* 后端重启/断连时忽略 */ }
 }

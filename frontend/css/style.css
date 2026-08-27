@@ -606,50 +606,22 @@ td.t-data { color: #c9a86a; }
 /* 播放诊断条 */
 .pb-diag { font-size: 10px; color: #5ad47a; margin-left: auto; font-family: ui-monospace, Menlo, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 60%; }
 
-/* 后台构建进度:状态栏内嵌(不遮挡顶部按钮,可缩小) */
+/* 后台构建进度:状态栏内嵌(低调,不遮挡顶部按钮,可缩小) */
 .busy-toast {
   display: inline-flex; align-items: center; gap: 6px;
-  margin-left: 10px; padding: 2px 8px;
-  font-size: 11px; color: #8a93a3;
-  background: rgba(77, 163, 255, .08); border: 1px solid rgba(77, 163, 255, .25);
-  border-radius: 10px; cursor: default; max-width: 260px;
+  margin-left: 10px; padding: 1px 8px;
+  font-size: 11px; color: #6b7280;
+  background: rgba(255,255,255,.03); border: 1px solid transparent; border-radius: 10px;
+  cursor: default; max-width: 260px;
 }
 .busy-toast-track {
-  display: inline-block; width: 60px; height: 3px;
-  background: #242830; border-radius: 2px; overflow: hidden; vertical-align: middle;
+  display: inline-block; width: 48px; height: 2px;
+  background: #22262e; border-radius: 1px; overflow: hidden; vertical-align: middle;
 }
 #busy-toast-bar {
   display: block; height: 100%;
-  background: linear-gradient(90deg, #4da3ff, #5ad47a);
+  background: #4a5568;
   transition: width .3s ease;
-}
-
-/* 构建进度弹窗(居中遮罩) */
-.busy-overlay {
-  position: fixed; inset: 0; z-index: 1000;
-  background: rgba(10, 12, 16, .72);
-  display: flex; align-items: center; justify-content: center;
-}
-.busy-overlay-box {
-  width: 340px; padding: 22px 26px;
-  background: #1b1f27; border: 1px solid #2c323d; border-radius: 12px;
-  box-shadow: 0 12px 40px rgba(0,0,0,.5);
-}
-.busy-overlay-title {
-  font-size: 14px; font-weight: 600; color: #e8ecf3; margin-bottom: 8px;
-}
-.busy-overlay-text {
-  font-size: 12px; color: #8a93a3; margin-bottom: 10px;
-}
-.busy-overlay-track {
-  height: 6px; background: #242830; border-radius: 3px; overflow: hidden;
-}
-.busy-overlay-bar {
-  height: 100%; background: linear-gradient(90deg, #4da3ff, #5ad47a);
-  transition: width .3s ease;
-}
-.busy-overlay-hint {
-  font-size: 11px; color: #5c6472; margin-top: 10px; line-height: 1.5;
 }
 /* 构建中置灰按钮 */
 button:disabled {
