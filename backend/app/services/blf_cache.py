@@ -254,6 +254,9 @@ def build_async(path: Path) -> bool:
                 save_disk(bundle, path)
                 with _lock:
                     _mem[str(path)] = bundle
+            except Exception:
+                import traceback
+                traceback.print_exc()   # ⚠️ 构建线程异常必须打印(曾静默崩溃:播放查询全表扫描致锁冲突)
             finally:
                 clear_progress(key)
                 finish_build(path)

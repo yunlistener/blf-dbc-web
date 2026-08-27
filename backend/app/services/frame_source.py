@@ -189,6 +189,7 @@ class SqliteFrameSource(FrameSource):
         self._cur_t = 0.0
         self._eof = False
         self._batch_rows: list = []   # 当前批缓存(按 ts 有序)
+        self._last_rowid = 0          # 构建中增量游标(插入顺序=时间顺序,主键扫描免索引)
 
     # ---- FrameSource ----
 
@@ -196,9 +197,25 @@ class SqliteFrameSource(FrameSource):
         self._cur_t = t
         self._eof = False
         self._batch_rows = []
+        self._last_rowid = 0   # 构建中:从头顺序播(简化);构建完成后走 ts 查询
 
     def next_batch(self, max_frames: int, end_t: float | None = None) -> list:
         out: list = []
+        if self._is_building():
+            # ⚠️ 构建中:rowid 增量游标 —— 插入顺序 = BLF 时间顺序,主键扫描免索引;
+            #    WHERE ts 查询在无 idx_ts 时全表扫描(3843 万行 → 单批 10-30s → WS 卡死 1011)
+            rows = self._con.execute(
+                "SELECT rowid, ts, channel, frame_id, data, flags FROM frames "
+                "WHERE rowid > ? ORDER BY rowid LIMIT ?",
+                (self._last_rowid, max_frames)).fetchall()
+            if rows:
+                for rid, ts, ch, fid, data, flags in rows:
+                    out.append(Frame(ts=ts - self._t0, channel=ch, frame_id=fid,
+                                     data=data, is_fd=bool(flags & 1),
+                                     dlc=len(data) if isinstance(data, bytes) else 8))
+                self._last_rowid = rows[-1][0]
+                self._cur_t = out[-1].ts
+            return out   # 构建中 eof 恒 False
         abs_start = self._cur_t + self._t0
         abs_end = (end_t + self._t0) if end_t is not None else None
         # 取 [游标, end_t] 区间的帧(ORDER BY ts 保证有序,游标推进)
