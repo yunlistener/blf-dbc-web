@@ -1480,6 +1480,129 @@ document.getElementById("btn-export").onclick = () => {
   showTip("正在导出 CSV(按当前缩放区间)…");
 };
 
+/* ---------- 导出 HTML:当前面板所有示波器曲线 → 独立 HTML(内嵌 chart.js + 数据,离线可看) ---------- */
+document.getElementById("btn-export-html").onclick = async () => {
+  const withData = state.plots.filter(p => p.sigs.length && p.chart);
+  if (!withData.length) { showTip("请先在面板中添加信号曲线"); return; }
+  showTip("正在导出 HTML(拉取当前缩放区间全量数据)…");
+  const dur = (state.stats && state.stats.duration_s) || 0;
+  // 当前 x 轴范围(时间同步,取任一示波器);无缩放 = 全时长
+  let x0 = 0, x1 = dur || 1;
+  const p0 = withData[0].chart.options.scales.x;
+  if (p0 && p0.min != null && p0.max != null && p0.max > p0.min) { x0 = p0.min; x1 = p0.max; }
+  // 全部显示/懒加载模式:窗口数据已覆盖当前范围 → 直接用内存数据,免请求
+  const staticMode = !playState.playing && state.signals.every(s => s.winData && s.winData.times.length);
+  const scopes = [];
+  for (const p of withData) {
+    const ya = p.chart.options.scales.y;
+    const sigs = [];
+    for (const s of p.sigs) {
+      let times, values;
+      if (staticMode) { times = s.winData.times; values = s.winData.values; }
+      else {
+        try {
+          const d = await api(`/api/blf/${encodeURIComponent(state.blf)}/decode?dbc=${encodeURIComponent(s.dbc || "")}` +
+            `&frame_id=${s.frame_id}&signal=${encodeURIComponent(s.signal)}&channel=${s.channel}` +
+            `&start=${x0}&end=${x1}&max_points=100000`);
+          times = (d.times || []).map(t => t - state.t0);   // 绝对时间戳 → 相对秒(与面板 x 轴一致)
+          values = d.values || [];
+        } catch (e) { showTip(`拉取 ${s.signal} 失败: ${e.message}`); continue; }
+      }
+      // 统一裁剪到当前 x 范围 + 抽稀(大文件可百万点,HTML 内嵌控制在 ~15 万点/信号)
+      const t = times, v = values;
+      let i0 = 0, i1 = t.length;
+      if (t.length) {
+      const lo = x0 - 1e-9, hi = x1 + 1e-9;
+      // 二分找首/末个在 [lo,hi] 内的点
+      let a = 0, b = t.length;
+      while (a < b) { const m = (a + b) >> 1; if (t[m] < lo) a = m + 1; else b = m; }
+      i0 = a;
+      a = i0; b = t.length;
+      while (a < b) { const m = (a + b) >> 1; if (t[m] <= hi) a = m + 1; else b = m; }
+      i1 = a;
+      }
+      const step = Math.max(1, Math.floor((i1 - i0) / 150000));
+      const pts = [];
+      for (let i = i0; i < i1; i += step) {
+        const raw = v[i];
+        const val = (raw != null && typeof raw === "object" && "value" in raw) ? raw.value : raw;
+        if (val == null) continue;
+        pts.push([Number(t[i].toFixed(6)), Number(Number(val).toPrecision(8))]);
+      }
+      if (!pts.length) continue;
+      sigs.push({ name: s.signal, unit: s.unit || "", color: s.color, steps: !!(s.choices && Object.keys(s.choices).length), data: pts });
+    }
+    if (!sigs.length) continue;
+    scopes.push({ id: p.id, title: p.title ? p.title.textContent.trim() : "", sigs,
+      x: [x0, x1], y: ya && ya.min != null ? [ya.min, ya.max] : null });
+  }
+  if (!scopes.length) { showTip("没有可导出的曲线数据"); return; }
+  let chartjs = "";
+  try { chartjs = await (await fetch("vendor/chart.js")).text(); }
+  catch (e) { showTip("读取 chart.js 失败: " + e.message); return; }
+  const meta = { blf: state.blf || "", dbc: state.dbc || "", x0, x1, generated: new Date().toLocaleString() };
+  const html = buildExportHtml(chartjs, meta, scopes);
+  const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${(state.blf || "blf").replace(/\.blf$/i, "")}_信号曲线_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.html`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  showTip(`已导出 HTML(${scopes.length} 个示波器,${scopes.reduce((n, s) => n + s.sigs.length, 0)} 条曲线)`);
+};
+
+/* 生成独立 HTML 文件内容:内嵌 chart.js + 数据 + 深色主题,离线双击即看 */
+function buildExportHtml(chartjs, meta, scopes) {
+  const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const scopeHtml = scopes.map(sc => {
+    const legend = sc.sigs.map(s =>
+      `<span class="lg" style="color:${s.color}"><i style="background:${s.color}"></i>${esc(s.name)}${s.unit ? `<u>${esc(s.unit)}</u>` : ""}${s.steps ? " [值表]" : ""}</span>`).join("");
+    return `<section class="scope"><div class="scope-head">${esc(sc.title || ("示波器 " + sc.id))}</div><div class="legend">${legend}</div><div class="chartbox"><canvas></canvas></div></section>`;
+  }).join("\n");
+  const init = `
+(function(){
+  const META=${JSON.stringify(meta)}, SCOPES=${JSON.stringify(scopes)};
+  const cvs=[...document.querySelectorAll(".scope canvas")];   // 顺序与 SCOPES 对应
+  SCOPES.forEach((sc,idx)=>{
+    if(!cvs[idx])return;
+    new Chart(cvs[idx],{type:'line',data:{datasets:sc.sigs.map(s=>({label:s.name,data:s.data,borderColor:s.color,backgroundColor:s.color,borderWidth:s.steps?1:2,pointRadius:0,tension:0}))},
+      options:{responsive:true,maintainAspectRatio:false,animation:false,
+        interaction:{mode:'index',intersect:false},
+        scales:{x:{type:'linear',min:sc.x[0],max:sc.x[1],grid:{color:'#242830'},ticks:{color:'#8a93a3',maxTicksLimit:14,autoSkip:true,callback:v=>Number(v).toFixed(3)+'s'}},
+                y:{type:'linear',grid:{color:'#242830'},ticks:{color:'#8a93a3'}}},
+        plugins:{legend:{display:false},
+          tooltip:{mode:'index',intersect:false,backgroundColor:'rgba(22,24,29,.95)',titleColor:'#8a93a3',bodyColor:'#e2e8f0',borderColor:'#3a4150',borderWidth:1,
+            callbacks:{title:items=>items&&items[0]?Number(items[0].parsed.x).toFixed(3)+' s':'',
+              label:item=>item.dataset.label+': '+fmt(item.parsed.y)}}}}});
+  });
+  function fmt(v){return (v==null)?'—':String(Number(Number(v).toPrecision(6)));}
+})();`;
+  return `<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CAN 信号曲线导出 — ${esc(meta.blf)}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#16181d;color:#c9ced6;font:13px/1.5 "Segoe UI",system-ui,sans-serif;padding:16px}
+.head{margin-bottom:14px}
+.head h1{font-size:16px;color:#e2e8f0;font-weight:600}
+.head .meta{color:#8a93a3;font-size:12px;margin-top:4px}
+.scope{background:#1e2128;border:1px solid #2b2f38;border-radius:6px;margin-bottom:14px;overflow:hidden}
+.scope-head{padding:6px 12px;font-size:12px;color:#8a93a3;border-bottom:1px solid #242830}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;padding:8px 12px;border-bottom:1px solid #242830}
+.lg{font-size:12px;display:inline-flex;align-items:center;gap:5px}
+.lg i{width:14px;height:2px;display:inline-block}
+.lg u{color:#6b7280;text-decoration:none;font-size:11px}
+.chartbox{height:300px;padding:8px}
+</style></head><body>
+<div class="head"><h1>CAN 信号曲线导出</h1>
+<div class="meta">BLF: ${esc(meta.blf)}${meta.dbc ? " · DBC: " + esc(meta.dbc) : ""} · 时间范围 ${meta.x0.toFixed(3)} s – ${meta.x1.toFixed(3)} s · 导出时间 ${esc(meta.generated)}</div></div>
+${scopeHtml}
+<script>${chartjs}</script>
+<script>${init}</script>
+</body></html>`;
+}
+
 document.getElementById("btn-reset").onclick = () => {
   state.xRange = null;
   state.plots.forEach(p => {
